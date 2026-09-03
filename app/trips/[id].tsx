@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
-  Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,9 +19,8 @@ import {
   deleteTrip,
   deleteExpense,
 } from '../../src/lib/database';
-import { encodeTripForQR, exportTripAsFile } from '../../src/lib/qr-sync';
+
 import { simplifyDebts } from '../../src/lib/debt';
-import { formatSettlementText } from '../../src/lib/settlement';
 import { Trip, CURRENCIES } from '../../src/types';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../../src/constants';
 
@@ -81,19 +79,9 @@ export default function TripDetailScreen() {
     ]);
   }
 
-  async function handleExportQR() {
-    if (!trip) return;
-    try {
-      const qrData = encodeTripForQR(trip);
-      Alert.alert('QR Code Data', qrData.substring(0, 100) + '...', [
-        { text: 'Copy', onPress: () => Share.share({ message: qrData }) },
-        { text: 'OK' },
-      ]);
-    } catch (e: any) {
-      if (e.message === 'PAYLOAD_TOO_LARGE') {
-        exportTripAsFile(trip);
-      }
-    }
+  function handleExportQR() {
+    if (!id) return;
+    router.push(`/trips/share-qr/${id}`);
   }
 
   if (!trip) {

@@ -55,20 +55,7 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
   return db;
 }
 
-// ── Trips ──────────────────────────────────────────────────────────
-
-export async function createTrip(name: string, currency: string): Promise<Trip> {
-  const database = await getDb();
-  const id = generateUUID();
-  const now = Date.now();
-
-  await database.runAsync(
-    'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    [id, name, currency, now, now]
-  );
-
-  return { id, name, currency, members: [], expenses: [], createdAt: now, updatedAt: now };
-}
+// ── Read helpers (single-statement, no transaction needed) ─────────
 
 export async function getAllTrips(): Promise<Trip[]> {
   const database = await getDb();
@@ -123,30 +110,7 @@ export async function getTripById(id: string): Promise<Trip | null> {
   };
 }
 
-export async function deleteTrip(id: string): Promise<void> {
-  const database = await getDb();
-  await database.runAsync('DELETE FROM trips WHERE id = ?', [id]);
-}
-
-// ── Members ────────────────────────────────────────────────────────
-
-export async function addMember(
-  tripId: string,
-  name: string,
-  upiOrHandle?: string
-): Promise<Member> {
-  const database = await getDb();
-  const id = generateUUID();
-
-  await database.runAsync(
-    'INSERT INTO members (id, trip_id, name, upi_or_handle) VALUES (?, ?, ?, ?)',
-    [id, tripId, name, upiOrHandle || null]
-  );
-
-  return { id, name, upiOrHandle };
-}
-
-export async function getMembersByTripId(tripId: string): Promise<Member[]> {
+async function getMembersByTripId(tripId: string): Promise<Member[]> {
   const database = await getDb();
   const rows = await database.getAllAsync<{
     id: string;
@@ -161,44 +125,7 @@ export async function getMembersByTripId(tripId: string): Promise<Member[]> {
   }));
 }
 
-export async function deleteMember(id: string): Promise<void> {
-  const database = await getDb();
-  await database.runAsync('DELETE FROM members WHERE id = ?', [id]);
-}
-
-// ── Expenses ───────────────────────────────────────────────────────
-
-export async function addExpense(
-  tripId: string,
-  title: string,
-  amount: number,
-  paidBy: string,
-  splitBetween: SplitShare[],
-  category: string
-): Promise<TripExpense> {
-  const database = await getDb();
-  const id = generateUUID();
-  const now = Date.now();
-
-  await database.runAsync(
-    'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [id, tripId, title, amount, paidBy, category, now]
-  );
-
-  for (const share of splitBetween) {
-    const shareId = generateUUID();
-    await database.runAsync(
-      'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
-      [shareId, id, share.memberId, share.amount]
-    );
-  }
-
-  await database.runAsync('UPDATE trips SET updated_at = ? WHERE id = ?', [now, tripId]);
-
-  return { id, tripId, title, amount, paidBy, splitBetween, category, updatedAt: now };
-}
-
-export async function getExpensesByTripId(tripId: string): Promise<TripExpense[]> {
+async function getExpensesByTripId(tripId: string): Promise<TripExpense[]> {
   const database = await getDb();
   const expenseRows = await database.getAllAsync<{
     id: string;
@@ -231,14 +158,148 @@ export async function getExpensesByTripId(tripId: string): Promise<TripExpense[]
   return expenses;
 }
 
-export async function deleteExpense(id: string): Promise<void> {
-  const database = await getDb();
-  await database.runAsync('DELETE FROM split_shares WHERE expense_id = ?', [id]);
-  await database.runAsync('DELETE FROM expenses WHERE id = ?', [id]);
+// Transaction helper — uses the txn object directly inside withExclusiveTransactionAsync
+// Transaction extends SQLiteDatabase so txn has the same query methods.
+
+async function getExistingMemberIds(
+  txn: Pick<SQLite.SQLiteDatabase, 'getAllAsync'>,
+  tripId: string
+): Promise<Set<string>> {
+  const rows = await txn.getAllAsync<{ id: string }>(
+    'SELECT id FROM members WHERE trip_id = ?',
+    [tripId]
+  );
+  return new Set(rows.map((r) => r.id));
 }
 
-// ── QR Sync Merge (Last-Write-Wins) ────────────────────────────────
+async function getExistingExpenses(
+  txn: Pick<SQLite.SQLiteDatabase, 'getAllAsync'>,
+  tripId: string
+): Promise<Map<string, TripExpense>> {
+  const expenseRows = await txn.getAllAsync<{
+    id: string;
+    trip_id: string;
+    title: string;
+    amount: number;
+    paid_by: string;
+    category: string;
+    updated_at: number;
+  }>('SELECT * FROM expenses WHERE trip_id = ?', [tripId]);
 
+  const map = new Map<string, TripExpense>();
+  for (const row of expenseRows) {
+    const shares = await txn.getAllAsync<{ member_id: string; amount: number }>(
+      'SELECT member_id, amount FROM split_shares WHERE expense_id = ?',
+      [row.id]
+    );
+    map.set(row.id, {
+      id: row.id,
+      tripId: row.trip_id,
+      title: row.title,
+      amount: row.amount,
+      paidBy: row.paid_by,
+      splitBetween: shares.map((s) => ({ memberId: s.member_id, amount: s.amount })),
+      category: row.category,
+      updatedAt: row.updated_at,
+    });
+  }
+  return map;
+}
+
+// ── Write operations (transactional) ───────────────────────────────
+
+export async function createTrip(name: string, currency: string): Promise<Trip> {
+  const database = await getDb();
+  const id = generateUUID();
+  const now = Date.now();
+
+  await database.runAsync(
+    'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [id, name, currency, now, now]
+  );
+
+  return { id, name, currency, members: [], expenses: [], createdAt: now, updatedAt: now };
+}
+
+export async function addMember(
+  tripId: string,
+  name: string,
+  upiOrHandle?: string
+): Promise<Member> {
+  const database = await getDb();
+  const id = generateUUID();
+
+  await database.runAsync(
+    'INSERT INTO members (id, trip_id, name, upi_or_handle) VALUES (?, ?, ?, ?)',
+    [id, tripId, name, upiOrHandle || null]
+  );
+
+  return { id, name, upiOrHandle };
+}
+
+export async function deleteTrip(id: string): Promise<void> {
+  const database = await getDb();
+  await database.runAsync('DELETE FROM trips WHERE id = ?', [id]);
+}
+
+export async function deleteMember(id: string): Promise<void> {
+  const database = await getDb();
+  await database.runAsync('DELETE FROM members WHERE id = ?', [id]);
+}
+
+/**
+ * Add an expense with its split shares atomically.
+ * The expense row, all split_shares rows, and the trip's updated_at
+ * are written in a single exclusive transaction — no orphaned rows on failure.
+ */
+export async function addExpense(
+  tripId: string,
+  title: string,
+  amount: number,
+  paidBy: string,
+  splitBetween: SplitShare[],
+  category: string
+): Promise<TripExpense> {
+  const database = await getDb();
+  const id = generateUUID();
+  const now = Date.now();
+
+  await database.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync(
+      'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, tripId, title, amount, paidBy, category, now]
+    );
+
+    for (const share of splitBetween) {
+      const shareId = generateUUID();
+      await txn.runAsync(
+        'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+        [shareId, id, share.memberId, share.amount]
+      );
+    }
+
+    await txn.runAsync('UPDATE trips SET updated_at = ? WHERE id = ?', [now, tripId]);
+  });
+
+  return { id, tripId, title, amount, paidBy, splitBetween, category, updatedAt: now };
+}
+
+/**
+ * Delete an expense and all its split shares atomically.
+ */
+export async function deleteExpense(id: string): Promise<void> {
+  const database = await getDb();
+  await database.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync('DELETE FROM split_shares WHERE expense_id = ?', [id]);
+    await txn.runAsync('DELETE FROM expenses WHERE id = ?', [id]);
+  });
+}
+
+/**
+ * QR Sync merge — entire LWW merge runs inside one exclusive transaction.
+ * Members are appended, expenses are inserted or overwritten by updatedAt.
+ * The transaction guarantees no half-written state on error.
+ */
 export async function mergeTripFromPayload(incomingTrip: Trip): Promise<{
   inserted: number;
   updated: number;
@@ -249,71 +310,73 @@ export async function mergeTripFromPayload(incomingTrip: Trip): Promise<{
   let updated = 0;
   let membersAdded = 0;
 
-  // Upsert trip
-  const existingTrip = await getTripById(incomingTrip.id);
-  if (!existingTrip) {
-    await database.runAsync(
-      'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      [incomingTrip.id, incomingTrip.name, incomingTrip.currency, incomingTrip.createdAt, incomingTrip.updatedAt]
-    );
-  } else if (incomingTrip.updatedAt > existingTrip.updatedAt) {
-    await database.runAsync(
-      'UPDATE trips SET name = ?, currency = ?, updated_at = ? WHERE id = ?',
-      [incomingTrip.name, incomingTrip.currency, incomingTrip.updatedAt, incomingTrip.id]
-    );
-  }
+  await database.withExclusiveTransactionAsync(async (txn) => {
+    // Upsert trip
+    const existingTripRow = await txn.getFirstAsync<{
+      id: string;
+      updated_at: number;
+    }>('SELECT id, updated_at FROM trips WHERE id = ?', [incomingTrip.id]);
 
-  // Merge members: append new ones
-  const existingMembers = await getMembersByTripId(incomingTrip.id);
-  const existingMemberIds = new Set(existingMembers.map((m) => m.id));
-
-  for (const member of incomingTrip.members) {
-    if (!existingMemberIds.has(member.id)) {
-      await database.runAsync(
-        'INSERT INTO members (id, trip_id, name, upi_or_handle) VALUES (?, ?, ?, ?)',
-        [member.id, incomingTrip.id, member.name, member.upiOrHandle || null]
+    if (!existingTripRow) {
+      await txn.runAsync(
+        'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        [incomingTrip.id, incomingTrip.name, incomingTrip.currency, incomingTrip.createdAt, incomingTrip.updatedAt]
       );
-      membersAdded++;
+    } else if (incomingTrip.updatedAt > existingTripRow.updated_at) {
+      await txn.runAsync(
+        'UPDATE trips SET name = ?, currency = ?, updated_at = ? WHERE id = ?',
+        [incomingTrip.name, incomingTrip.currency, incomingTrip.updatedAt, incomingTrip.id]
+      );
     }
-  }
 
-  // Merge expenses: LWW by updatedAt
-  const existingExpenses = await getExpensesByTripId(incomingTrip.id);
-  const existingExpenseMap = new Map(existingExpenses.map((e) => [e.id, e]));
+    // Merge members: append new ones
+    const existingMemberIds = await getExistingMemberIds(txn, incomingTrip.id);
 
-  for (const expense of incomingTrip.expenses) {
-    const existing = existingExpenseMap.get(expense.id);
-    if (!existing) {
-      // Insert new expense
-      await database.runAsync(
-        'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [expense.id, expense.tripId, expense.title, expense.amount, expense.paidBy, expense.category, expense.updatedAt]
-      );
-      for (const share of expense.splitBetween) {
-        const shareId = generateUUID();
-        await database.runAsync(
-          'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
-          [shareId, expense.id, share.memberId, share.amount]
+    for (const member of incomingTrip.members) {
+      if (!existingMemberIds.has(member.id)) {
+        await txn.runAsync(
+          'INSERT INTO members (id, trip_id, name, upi_or_handle) VALUES (?, ?, ?, ?)',
+          [member.id, incomingTrip.id, member.name, member.upiOrHandle || null]
         );
+        membersAdded++;
       }
-      inserted++;
-    } else if (expense.updatedAt > existing.updatedAt) {
-      // Overwrite with incoming (LWW)
-      await database.runAsync(
-        'UPDATE expenses SET title = ?, amount = ?, paid_by = ?, category = ?, updated_at = ? WHERE id = ?',
-        [expense.title, expense.amount, expense.paidBy, expense.category, expense.updatedAt, expense.id]
-      );
-      await database.runAsync('DELETE FROM split_shares WHERE expense_id = ?', [expense.id]);
-      for (const share of expense.splitBetween) {
-        const shareId = generateUUID();
-        await database.runAsync(
-          'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
-          [shareId, expense.id, share.memberId, share.amount]
-        );
-      }
-      updated++;
     }
-  }
+
+    // Merge expenses: LWW by updatedAt
+    const existingExpenses = await getExistingExpenses(txn, incomingTrip.id);
+
+    for (const expense of incomingTrip.expenses) {
+      const existing = existingExpenses.get(expense.id);
+      if (!existing) {
+        await txn.runAsync(
+          'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [expense.id, expense.tripId, expense.title, expense.amount, expense.paidBy, expense.category, expense.updatedAt]
+        );
+        for (const share of expense.splitBetween) {
+          const shareId = generateUUID();
+          await txn.runAsync(
+            'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+            [shareId, expense.id, share.memberId, share.amount]
+          );
+        }
+        inserted++;
+      } else if (expense.updatedAt > existing.updatedAt) {
+        await txn.runAsync(
+          'UPDATE expenses SET title = ?, amount = ?, paid_by = ?, category = ?, updated_at = ? WHERE id = ?',
+          [expense.title, expense.amount, expense.paidBy, expense.category, expense.updatedAt, expense.id]
+        );
+        await txn.runAsync('DELETE FROM split_shares WHERE expense_id = ?', [expense.id]);
+        for (const share of expense.splitBetween) {
+          const shareId = generateUUID();
+          await txn.runAsync(
+            'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+            [shareId, expense.id, share.memberId, share.amount]
+          );
+        }
+        updated++;
+      }
+    }
+  });
 
   return { inserted, updated, membersAdded };
 }

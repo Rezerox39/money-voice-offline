@@ -1,5 +1,34 @@
-import { Member, TripExpense, SettlementTransaction } from '../types';
+import { Member, TripExpense, SplitShare, SettlementTransaction } from '../types';
 
+/**
+ * Compute an exact equal split using minor currency units (cents/paise)
+ * to prevent IEEE 754 floating-point precision errors.
+ *
+ * ₹100 split 3 ways → 33.34, 33.33, 33.33 (sums to exactly 100.00)
+ * ₹500 split 7 ways → 71.43 × 5 + 71.42 × 2 (sums to exactly 500.00)
+ */
+export function computeEqualSplit(
+  totalAmount: number,
+  memberIds: string[]
+): SplitShare[] {
+  const n = memberIds.length;
+  if (n === 0) return [];
+
+  const totalMinor = Math.round(totalAmount * 100);
+  const baseShare = Math.floor(totalMinor / n);
+  let remainder = totalMinor % n;
+
+  return memberIds.map((memberId) => {
+    const share = baseShare + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) remainder--;
+    return { memberId, amount: share / 100 };
+  });
+}
+
+/**
+ * Minimum Cash-Flow greedy algorithm.
+ * No circular payments — optimal settlement transactions.
+ */
 export function simplifyDebts(
   members: Member[],
   expenses: TripExpense[]

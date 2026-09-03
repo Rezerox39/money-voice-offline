@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -8,57 +8,46 @@ import { mergeTripFromPayload } from '../src/lib/database';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../src/constants';
 import * as DocumentPicker from 'expo-document-picker';
 
+const SCAN_COOLDOWN_MS = 1500;
+
 export default function ScanScreen() {
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
-  const [scanned, setScanned] = useState(false);
+  const isProcessingRef = useRef(false);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  if (!permission) {
-    return <View style={styles.container}><Text style={styles.loading}>Loading...</Text></View>;
-  }
+  const handleBarcodeScanned = useCallback(async ({ data }: { data: string }) => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
 
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.permContainer}>
-          <Ionicons name="camera-outline" size={64} color={COLORS.textMuted} />
-          <Text style={styles.permTitle}>Camera Permission Required</Text>
-          <Text style={styles.permSubtitle}>
-            We need camera access to scan QR codes for trip sync.
-          </Text>
-          <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
-            <Text style={styles.permBtnText}>Grant Permission</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.fallbackBtn} onPress={handleImportFile}>
-            <Text style={styles.fallbackBtnText}>Or import JSON file</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+    try {
+      const payload = decodeTripFromQR(data);
+      if (!payload) {
+        Alert.alert('Invalid QR', 'This QR code does not contain a valid Money Voice trip.', [
+          { text: 'OK' },
+        ]);
+        return;
+      }
 
-  function handleBarCodeScanned({ data }: { data: string }) {
-    if (scanned) return;
-    setScanned(true);
-
-    const payload = decodeTripFromQR(data);
-    if (!payload) {
-      Alert.alert('Invalid QR', 'This QR code does not contain a valid Money Voice trip.', [
-        { text: 'OK', onPress: () => setScanned(false) },
-      ]);
-      return;
-    }
-
-    mergeTripFromPayload(payload.trip).then((result) => {
+      const result = await mergeTripFromPayload(payload.trip);
       Alert.alert(
         'Trip Imported',
         `${payload.trip.name}: ${result.inserted} new expenses, ${result.membersAdded} new members.`,
-        [{ text: 'OK', onPress: () => router.back() }]
+        [{ text: 'OK', onPress: () => router.replace('/') }]
       );
-    });
-  }
+    } catch {
+      Alert.alert('Sync Error', 'Could not process the QR payload.');
+    } finally {
+      cooldownTimerRef.current = setTimeout(() => {
+        isProcessingRef.current = false;
+      }, SCAN_COOLDOWN_MS);
+    }
+  }, [router]);
 
   async function handleImportFile() {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'application/json',
@@ -81,7 +70,39 @@ export default function ScanScreen() {
       );
     } catch {
       Alert.alert('Import Failed', 'Could not read the selected file.');
+    } finally {
+      cooldownTimerRef.current = setTimeout(() => {
+        isProcessingRef.current = false;
+      }, SCAN_COOLDOWN_MS);
     }
+  }
+
+  if (!permission) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.loading}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.permContainer}>
+          <Ionicons name="camera-outline" size={64} color={COLORS.textMuted} />
+          <Text style={styles.permTitle}>Camera Permission Required</Text>
+          <Text style={styles.permSubtitle}>
+            We need camera access to scan QR codes for trip sync.
+          </Text>
+          <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
+            <Text style={styles.permBtnText}>Grant Permission</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.fallbackBtn} onPress={handleImportFile}>
+            <Text style={styles.fallbackBtnText}>Or import JSON file</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -89,7 +110,7 @@ export default function ScanScreen() {
       <CameraView
         style={styles.camera}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+        onBarcodeScanned={isProcessingRef.current ? undefined : handleBarcodeScanned}
       >
         <View style={styles.overlay}>
           <View style={styles.scanFrame} />

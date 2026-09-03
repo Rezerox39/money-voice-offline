@@ -18,6 +18,10 @@ export default function TripsLayout() {
         name="expense/[id]"
         options={{ title: 'Add Expense', presentation: 'modal' }}
       />
+      <Stack.Screen
+        name="share-qr/[id]"
+        options={{ title: 'Share QR', presentation: 'modal' }}
+      />
     </Stack>
   );
 }

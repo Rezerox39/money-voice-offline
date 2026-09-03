@@ -11,6 +11,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getTripById, addExpense } from '../../../src/lib/database';
+import { computeEqualSplit } from '../../../src/lib/debt';
 import { Trip, Member, CATEGORIES, SplitShare } from '../../../src/types';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../../../src/constants';
 
@@ -47,9 +48,7 @@ export default function AddExpenseScreen() {
     if (isNaN(total) || total <= 0) return [];
 
     if (splitMode === 'equal') {
-      const perPerson = total / trip.members.length;
-      const rounded = Math.round(perPerson * 100) / 100;
-      return trip.members.map((m) => ({ memberId: m.id, amount: rounded }));
+      return computeEqualSplit(total, trip.members.map((m) => m.id));
     }
 
     return trip.members
@@ -80,6 +79,15 @@ export default function AddExpenseScreen() {
 
     await addExpense(id, title.trim(), total, paidBy, splits, category);
     router.back();
+  }
+
+  function getEqualPreview(): string {
+    if (!trip || !amount) return 'Enter amount to see split';
+    const total = parseFloat(amount);
+    if (isNaN(total) || total <= 0) return 'Enter amount to see split';
+    const splits = computeEqualSplit(total, trip.members.map((m) => m.id));
+    const perPerson = splits[0]?.amount ?? 0;
+    return `${perPerson.toFixed(2)} per person`;
   }
 
   if (!trip) {
@@ -168,11 +176,7 @@ export default function AddExpenseScreen() {
 
       {splitMode === 'equal' ? (
         <View style={styles.equalPreview}>
-          <Text style={styles.equalText}>
-            {amount
-              ? `${(parseFloat(amount) / trip.members.length).toFixed(2)} per person`
-              : 'Enter amount to see split'}
-          </Text>
+          <Text style={styles.equalText}>{getEqualPreview()}</Text>
         </View>
       ) : (
         <View style={styles.customSplits}>
