@@ -63,3 +63,22 @@ export const CATEGORIES = [
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
+
+// ── Voice Engine Types ─────────────────────────────────────────────
+
+export type VoiceEngineState =
+  | 'idle'
+  | 'listening'
+  | 'processing'
+  | 'confirming'
+  | 'writing'
+  | 'error';
+
+export interface VoicePendingEntry {
+  rawTranscript: string;
+  parsedDisplay: string;
+  timestamp: number;
+  tripId?: string;
+}
+
+

@@ -1,9 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TripCard } from '../src/components/TripCard';
 import { EmptyState } from '../src/components/EmptyState';
+import { VoiceFAB } from '../src/components/VoiceFAB';
+import { SafetyWindow } from '../src/components/SafetyWindow';
+import { useVoiceEngine } from '../src/hooks/useVoiceEngine';
 import { getAllTrips } from '../src/lib/database';
 import { Trip } from '../src/types';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../src/constants';
@@ -12,6 +15,21 @@ import { useFocusEffect } from 'expo-router';
 export default function DashboardScreen() {
   const router = useRouter();
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [activeTrip, setActiveTrip] = useState<Trip | null>(null);
+
+  const voice = useVoiceEngine({
+    activeTrip,
+    onNavigate: (route) => {
+      if (route.startsWith('/settle')) {
+        if (activeTrip) router.push(`/settle/${activeTrip.id}`);
+      } else if (route.startsWith('/trips/qr')) {
+        if (activeTrip) router.push(`/trips/share-qr/${activeTrip.id}`);
+      } else {
+        router.push(route as any);
+      }
+    },
+    onRefresh: loadTrips,
+  });
 
   useFocusEffect(
     useCallback(() => {
@@ -22,12 +40,32 @@ export default function DashboardScreen() {
   async function loadTrips() {
     const allTrips = await getAllTrips();
     setTrips(allTrips);
+    // Auto-select first trip as active if none selected
+    if (!activeTrip && allTrips.length > 0) {
+      setActiveTrip(allTrips[0]);
+    }
+  }
+
+  function handleVoicePress() {
+    if (voice.state === 'listening') {
+      voice.stopListening();
+    } else if (voice.state === 'idle' || voice.state === 'error') {
+      voice.startListening();
+    }
   }
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>My Trips</Text>
+        <View>
+          <Text style={styles.title}>Money Voice</Text>
+          {activeTrip && (
+            <Text style={styles.activeTrip}>
+              #{activeTrip.name.toLowerCase().replace(/\s+/g, '-')}
+            </Text>
+          )}
+        </View>
         <View style={styles.actions}>
           <TouchableOpacity
             style={styles.iconBtn}
@@ -44,23 +82,64 @@ export default function DashboardScreen() {
         </View>
       </View>
 
+      {/* Voice status display */}
+      {voice.displayText ? (
+        <View style={styles.voiceStatus}>
+          <Text style={styles.voiceStatusText} numberOfLines={2}>
+            {voice.displayText}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Error display */}
+      {voice.error ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{voice.error}</Text>
+        </View>
+      ) : null}
+
+      {/* Trip list */}
       {trips.length === 0 ? (
         <EmptyState
           icon="airplane-outline"
           title="No trips yet"
-          subtitle="Create your first trip to start tracking group expenses, or scan a QR code to import one."
+          subtitle='Create your first trip or tap [REC] and say "New trip Goa weekend"'
         />
       ) : (
         <FlatList
           data={trips}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <TripCard trip={item} onPress={() => router.push(`/trips/${item.id}`)} />
+            <TripCard
+              trip={item}
+              onPress={() => {
+                setActiveTrip(item);
+                router.push(`/trips/${item.id}`);
+              }}
+            />
           )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* Safety Window Overlay */}
+      <SafetyWindow
+        visible={voice.state === 'confirming' && !!voice.pendingEntry}
+        displayText={voice.pendingEntry?.parsedDisplay ?? ''}
+        rawTranscript={voice.pendingEntry?.rawTranscript ?? ''}
+        onConfirm={voice.confirmPending}
+        onEdit={voice.editPending}
+        onCancel={voice.cancelPending}
+      />
+
+      {/* Voice FAB — Bottom Right */}
+      <View style={styles.fabContainer}>
+        <VoiceFAB
+          state={voice.state}
+          onPress={handleVoicePress}
+        />
+      </View>
     </View>
   );
 }
@@ -83,6 +162,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.text,
   },
+  activeTrip: {
+    fontFamily: 'monospace',
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primary,
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
   actions: {
     flexDirection: 'row',
     gap: SPACING.sm,
@@ -98,7 +184,42 @@ const styles = StyleSheet.create({
   primaryBtn: {
     backgroundColor: COLORS.primary,
   },
+  voiceStatus: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  voiceStatusText: {
+    fontFamily: 'monospace',
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.success,
+    lineHeight: 18,
+  },
+  errorBanner: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+  },
+  errorText: {
+    fontFamily: 'monospace',
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.danger,
+  },
   list: {
-    paddingBottom: SPACING.xxxl,
+    paddingBottom: 120,
+  },
+  fabContainer: {
+    position: 'absolute',
+    bottom: SPACING.xl,
+    right: SPACING.xl,
+    zIndex: 50,
   },
 });
