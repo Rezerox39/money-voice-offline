@@ -35,11 +35,25 @@ jobs:
       - name: Prebuild Native Android Project
         run: npx expo prebuild --platform android --clean
 
+      - name: Bundle JS for Offline
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
       - name: Build Debug APK with Gradle
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+
+      - name: Verify Bundle Exists
+        run: |
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep "assets/index.android.bundle"
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
