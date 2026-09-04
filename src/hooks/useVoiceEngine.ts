@@ -2,7 +2,6 @@ import { useState, useCallback, useRef } from 'react';
 import {
   startOfflineRecognition,
   stopRecognition,
-  checkOfflineModelStatus,
   type OfflineSTTError,
 } from '../lib/offlineSpeech';
 import {
@@ -59,12 +58,6 @@ export function useVoiceEngine({
     setError(null);
     stopSpeaking();
 
-    // Pre-flight: verify offline model is installed
-    const modelStatus = await checkOfflineModelStatus();
-    if (!modelStatus.available) {
-      setError(modelStatus.message);
-      return;
-    }
 
     setState('listening');
 

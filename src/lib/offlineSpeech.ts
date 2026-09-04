@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────
-// offlineSpeech.ts — True offline speech-to-text engine
-// Uses expo-speech-recognition with requiresOnDeviceRecognition: true
-// Fails immediately if on-device model is missing — no network calls.
+// offlineSpeech.ts — Speech-to-text engine
+// Uses expo-speech-recognition. Tries on-device first, falls back
+// to network speech if no offline model is available.
 // ─────────────────────────────────────────────────────────────────
 
 // @ts-ignore — expo-speech-recognition runtime API differs from bundled types
@@ -22,21 +22,17 @@ export interface OfflineSTTError {
 
 // ── Configuration ──────────────────────────────────────────────────
 
-const OFFLINE_CONFIG = {
+const BASE_CONFIG = {
   lang: 'en-IN',
-  requiresOnDeviceRecognition: true, // CRITICAL: fail fast if no offline model
   addsPunctuation: false,
   interimResults: false,
   maxAlternatives: 1,
-} as const;
-
-const OFFLINE_MODEL_LOCALE = 'en-IN';
+};
 
 // ── Public API ─────────────────────────────────────────────────────
 
 /**
- * Check if the device supports offline speech recognition.
- * Returns true only if an on-device model is installed and available.
+ * Check if the device supports on-device recognition.
  */
 export async function isOfflineRecognitionAvailable(): Promise<boolean> {
   try {
@@ -47,79 +43,24 @@ export async function isOfflineRecognitionAvailable(): Promise<boolean> {
 }
 
 /**
- * Check if the device has the required offline language model.
- * Returns a structured result with availability and guidance.
- */
-export async function checkOfflineModelStatus(): Promise<{
-  available: boolean;
-  message: string;
-}> {
-  const supported = await isOfflineRecognitionAvailable();
-  if (supported) {
-    return {
-      available: true,
-      message: 'Offline speech model is installed and ready.',
-    };
-  }
-
-  return {
-    available: false,
-    message:
-      'Offline speech model required. Download offline language pack in Android Speech Settings.',
-  };
-}
-
-/**
- * Attempt to trigger the offline model download dialog (Android 13+).
- * Returns the download status.
- */
-export async function requestOfflineModelDownload(): Promise<{
-  status: 'download_success' | 'opened_dialog' | 'download_scheduled' | 'unsupported';
-  message: string;
-}> {
-  try {
-    const result = await ExpoSpeechRecognition.androidTriggerOfflineModelDownload({
-      locale: OFFLINE_MODEL_LOCALE,
-    });
-    return { status: result.status, message: result.message };
-  } catch (e: any) {
-    return {
-      status: 'unsupported',
-      message: `Model download not available: ${e?.message ?? 'unknown error'}`,
-    };
-  }
-}
-
-/**
- * Start offline speech recognition.
- * Returns a promise that resolves with the transcribed text.
- * Rejects immediately if on-device model is missing.
+ * Start speech recognition. Tries offline first, falls back to
+ * whatever speech engine the device has available.
+ * No longer hard-blocks if offline model is missing.
  */
 export function startOfflineRecognition(): Promise<OfflineSTTResult> {
   return new Promise((resolve, reject) => {
-    // Pre-flight: verify offline model is available
-    const supported = ExpoSpeechRecognition.supportsOnDeviceRecognition();
-    if (!supported) {
-      reject({
-        code: 'service-not-allowed',
-        message:
-          'Offline speech model required. Download offline language pack in Android Speech Settings.',
-        isOfflineModelMissing: true,
-      } satisfies OfflineSTTError);
-      return;
-    }
+    let hasResolved = false;
 
     // Set up event handlers before starting
     const removeResultListener = ExpoSpeechRecognition.addListener(
       'result',
       (event: any) => {
+        if (hasResolved) return;
         if (event.isFinal && event.results.length > 0) {
+          hasResolved = true;
           const best = event.results[0];
-          // Stop recognition after final result
           ExpoSpeechRecognition.stop();
-          removeResultListener();
-          removeErrorListener();
-          removeEndListener();
+          cleanup();
           resolve({
             transcript: best.transcript,
             confidence: best.confidence,
@@ -131,32 +72,65 @@ export function startOfflineRecognition(): Promise<OfflineSTTResult> {
     const removeErrorListener = ExpoSpeechRecognition.addListener(
       'error',
       (event: any) => {
-        removeResultListener();
-        removeErrorListener();
-        removeEndListener();
+        if (hasResolved) return;
+        hasResolved = true;
+        cleanup();
 
-        const isOfflineMissing =
-          event.error === 'service-not-allowed' ||
-          event.error === 'language-not-supported';
+        // Map error codes to user-friendly messages
+        const code = event.error;
+        let message = `Speech recognition error: ${code}`;
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          message = 'Microphone permission denied. Grant permission in Settings.';
+        } else if (code === 'no-speech') {
+          message = 'No speech detected. Try again.';
+        } else if (code === 'network' || code === 'network-timeout') {
+          message = 'Network unavailable for speech. Check your connection.';
+        } else if (code === 'language-not-supported') {
+          message = 'Language not supported by this device.';
+        } else if (code === 'client') {
+          message = 'Speech service unavailable. Is Google app installed?';
+        }
 
         reject({
-          code: event.error,
-          message: isOfflineMissing
-            ? 'Offline speech model required. Download offline language pack in Android Speech Settings.'
-            : `Speech recognition error: ${event.error} — ${event.message}`,
-          isOfflineModelMissing: isOfflineMissing,
+          code,
+          message,
+          isOfflineModelMissing: code === 'service-not-allowed',
         } satisfies OfflineSTTError);
       }
     );
 
     const removeEndListener = ExpoSpeechRecognition.addListener('end', () => {
+      cleanup();
+      if (!hasResolved) {
+        hasResolved = true;
+        reject({
+          code: 'no-speech',
+          message: 'No speech detected. Try again.',
+          isOfflineModelMissing: false,
+        } satisfies OfflineSTTError);
+      }
+    });
+
+    function cleanup() {
       removeResultListener();
       removeErrorListener();
       removeEndListener();
-    });
+    }
 
-    // Start recognition with strict offline config
-    ExpoSpeechRecognition.start(OFFLINE_CONFIG);
+    // Try offline first, fall back to whatever is available
+    let useOffline = false;
+    try {
+      useOffline = ExpoSpeechRecognition.supportsOnDeviceRecognition();
+    } catch {
+      useOffline = false;
+    }
+
+    const config = {
+      ...BASE_CONFIG,
+      requiresOnDeviceRecognition: useOffline,
+    };
+
+    ExpoSpeechRecognition.start(config);
   });
 }
 

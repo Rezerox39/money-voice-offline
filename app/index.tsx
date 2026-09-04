@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   Platform, RefreshControl, KeyboardAvoidingView,
+  PermissionsAndroid,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -90,20 +91,34 @@ export default function ChannelScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     } catch {}
 
-    if (voiceState.stage === 'listening' || voiceState.isRecording) {
+    if (voiceState.stage === "listening" || voiceState.isRecording) {
       voice.stopRecording();
       return;
     }
 
-    if (voiceState.stage === 'idle' || voiceState.stage === 'error') {
+    if (voiceState.stage === "idle" || voiceState.stage === "error") {
       try {
+        // Request mic permission explicitly before starting STT
+        let granted = false;
+        if (Platform.OS === "android") {
+          const result = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+            { title: "Microphone Permission", message: "MoneyVoice needs microphone access for voice commands.", buttonPositive: "Allow" }
+          );
+          granted = result === PermissionsAndroid.RESULTS.GRANTED;
+        } else {
+          granted = true;
+        }
+        if (!granted) {
+          setShowCLIBar(true);
+          return;
+        }
         await voice.startRecording();
-        // If startRecording failed silently (no offline model), show CLI fallback
-        if (voice.state.stage === 'error') {
+        if (voice.state.stage === "error") {
           setShowCLIBar(true);
         }
       } catch (err) {
-        console.warn('[VOICE_FAB] Start recording failed:', err);
+        console.warn("[VOICE_FAB] Start recording failed:", err);
         setShowCLIBar(true);
       }
     }
