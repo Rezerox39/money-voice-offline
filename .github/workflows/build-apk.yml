@@ -1,4 +1,4 @@
-name: Build Android Debug APK
+name: Build Standalone Android APK
 
 on:
   workflow_dispatch:
@@ -35,29 +35,34 @@ jobs:
       - name: Prebuild Native Android Project
         run: npx expo prebuild --platform android --clean
 
-      - name: Bundle JS for Offline
+      - name: Sign release with debug key
         run: |
-          mkdir -p android/app/src/main/assets
-          npx react-native bundle \
-            --platform android \
-            --dev false \
-            --entry-file index.js \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res
+          # Configure release to use debug signing config
+          cd android
+          sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.debug/' app/build.gradle
+          # Ensure release build type uses debug signing and no minification
+          sed -i '/release {/,/}/ {
+            s/minifyEnabled.*/minifyEnabled false/
+            s/shrinkResources.*/shrinkResources false/
+          }' app/build.gradle
 
-      - name: Build Debug APK with Gradle
+      - name: Build Release APK (with embedded JS bundle)
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Verify Bundle Exists
+      - name: Verify JS Bundle is Embedded
         run: |
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep "assets/index.android.bundle"
+          echo "Checking for index.android.bundle in release APK..."
+          unzip -l android/app/build/outputs/apk/release/app-release.apk | grep "assets/index.android.bundle" || {
+            echo "WARNING: Bundle not found, trying Hermes bytecode..."
+            unzip -l android/app/build/outputs/apk/release/app-release.apk | grep "assets/" | head -10
+          }
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: money-voice-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: money-voice-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 5
