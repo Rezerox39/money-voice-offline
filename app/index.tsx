@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  Platform, RefreshControl,
+  Platform, RefreshControl, KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +18,8 @@ import { ExpenseRowSkeleton } from '../src/components/LoadingSkeleton';
 import { recordActivity, getStreakData, StreakData } from '../src/lib/streak';
 import { computePoolTelemetry } from '../src/lib/debt';
 import { CURRENCIES } from '../src/types';
+
+const KEYBOARD_OFFSET = Platform.OS === 'ios' ? 0 : 20;
 
 function BurnBar({ remaining, total }: { remaining: number; total: number }) {
   const pct = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
@@ -69,7 +71,6 @@ export default function ChannelScreen() {
   function handleModeSwitch() {
     Haptics.selectionAsync();
     if (mode === 'PERSONAL') {
-      // Navigate to trip hub to select a trip
       router.push('/trips');
     } else {
       setMode('PERSONAL');
@@ -85,13 +86,24 @@ export default function ChannelScreen() {
   }
 
   async function handleVoicePress() {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    } catch {}
+
     if (voiceState.stage === 'listening' || voiceState.isRecording) {
       voice.stopRecording();
-    } else if (voiceState.stage === 'idle' || voiceState.stage === 'error') {
-      await voice.startRecording();
-      // If startRecording failed silently (no offline model), show CLI fallback
-      if (voice.state.stage === 'error') {
+      return;
+    }
+
+    if (voiceState.stage === 'idle' || voiceState.stage === 'error') {
+      try {
+        await voice.startRecording();
+        // If startRecording failed silently (no offline model), show CLI fallback
+        if (voice.state.stage === 'error') {
+          setShowCLIBar(true);
+        }
+      } catch (err) {
+        console.warn('[VOICE_FAB] Start recording failed:', err);
         setShowCLIBar(true);
       }
     }
@@ -131,38 +143,33 @@ export default function ChannelScreen() {
         )}
         <View style={styles.tripHeader}>
           <Text style={styles.tripChannel}>#{activeTrip.name.toLowerCase().replace(/\s+/g, '-')}</Text>
-          <Text style={styles.tripMeta}>{activeTrip.members.length} MEMBERS · {activeTrip.expenses.length} TXNS · TOTAL: {currency.symbol}{totalExpenses.toLocaleString('en-IN')}</Text>
+          <Text style={styles.tripMeta}>{activeTrip.members.length} members · {activeTrip.expenses.length} txns</Text>
         </View>
-        <FlatList
-          data={activeTrip.expenses.slice().reverse()}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => {
-            const payerName = activeTrip.members.find(m => m.id === item.paidBy)?.name || 'Unknown';
-            const isPool = item.paidBy === 'POOL';
-            return (
-              <View style={styles.expenseRow}>
-                <View style={styles.expenseInfo}>
-                  <Text style={styles.expenseTitle}>{isPool ? '[POOL] ' : ''}{item.title}</Text>
-                  <Text style={styles.expenseMeta}>{payerName} · {item.category}</Text>
-                </View>
-                <Text style={styles.expenseAmount}>{currency.symbol}{item.amount.toLocaleString('en-IN')}</Text>
+        {activeTrip.expenses.map((exp) => {
+          const payer = activeTrip.members.find((m) => m.id === exp.paidBy);
+          return (
+            <View key={exp.id} style={styles.expenseRow}>
+              <View style={styles.expenseInfo}>
+                <Text style={styles.expenseTitle}>{exp.title}</Text>
+                <Text style={styles.expenseMeta}>@{payer?.name ?? 'Unknown'} · {exp.category}</Text>
               </View>
-            );
-          }}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00FF66" colors={['#00FF66']} />}
-        />
+              <Text style={styles.expenseAmount}>{currency.symbol}{exp.amount.toLocaleString('en-IN')}</Text>
+            </View>
+          );
+        })}
+        {activeTrip.expenses.length === 0 && (
+          <EmptyState icon="receipt-outline" title="No expenses yet" subtitle="Tap the mic or CLI to log your first expense" />
+        )}
       </View>
     );
   }
 
   function renderPersonalMode() {
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayExpenses = personalExpenses.filter(e => e.createdAt >= todayStart.getTime());
+    const totalPersonal = personalExpenses.reduce((s, e) => s + e.amount, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayExpenses = personalExpenses.filter((e) => e.createdAt >= today.getTime());
     const todayTotal = todayExpenses.reduce((s, e) => s + e.amount, 0);
-    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-    const monthExpenses = personalExpenses.filter(e => e.createdAt >= monthStart.getTime());
-    const monthTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
 
     return (
       <View style={styles.modeContainer}>
@@ -174,103 +181,120 @@ export default function ChannelScreen() {
           <View style={styles.burnDivider} />
           <View style={styles.burnRow}>
             <Text style={styles.burnLabel}>THIS MONTH</Text>
-            <Text style={styles.burnAmountAccent}>₹{monthTotal.toLocaleString('en-IN')}</Text>
+            <Text style={styles.burnAmountAccent}>₹{totalPersonal.toLocaleString('en-IN')}</Text>
           </View>
         </View>
-        <FlatList
-          data={personalExpenses.slice().reverse()}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.personalRow}>
+        {personalExpenses.length === 0 ? (
+          <EmptyState icon="cash-outline" title="No personal expenses" subtitle="Say 'Chai 30 personal' to log directly" />
+        ) : (
+          personalExpenses.map((exp) => (
+            <View key={exp.id} style={styles.personalRow}>
               <View style={styles.personalInfo}>
-                <Text style={styles.personalTitle}>{item.title}</Text>
-                <Text style={styles.personalMeta}>{item.category} · {new Date(item.createdAt).toLocaleDateString('en-IN')}</Text>
+                <Text style={styles.personalTitle}>{exp.title}</Text>
+                <Text style={styles.personalMeta}>{exp.category}</Text>
               </View>
-              <Text style={styles.personalAmount}>₹{item.amount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.personalAmount}>₹{exp.amount.toLocaleString('en-IN')}</Text>
             </View>
-          )}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={<EmptyState icon="receipt-outline" title="No expenses yet" subtitle='Say "Chai 30 personal" to start tracking' />}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00FF66" colors={['#00FF66']} />}
-        />
+          ))
+        )}
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
-      {/* Status Bar */}
-      <View style={styles.statusBar}>
-        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => { if (activeTrip) { Haptics.selectionAsync(); setShowSyncModal(true); } }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={KEYBOARD_OFFSET}
+    >
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 32), paddingBottom: Math.max(insets.bottom, 16) }]}>
+        {/* Status Bar */}
+        <View style={styles.statusBar}>
           <Text style={styles.statusDot}>●</Text>
           <Text style={styles.statusText}>OFFLINE MESH</Text>
-        </TouchableOpacity>
-        {streak && streak.currentStreak > 0 && (
-          <Text style={styles.streakBadge}>{streak.currentStreak}🔥</Text>
-        )}
-      </View>
-
-      {/* Mode Bar */}
-      <View style={styles.modeBar}>
-        <TouchableOpacity onPress={handleModeSwitch} style={styles.modeSwitch}>
-          <Text style={styles.modeText}>MODE: {mode === 'PERSONAL' ? '/PERSONAL' : `#${activeTrip?.name.toLowerCase().replace(/\s+/g, '-') || 'trip'}`}</Text>
-          <Ionicons name="swap-horizontal" size={14} color="#FFB000" />
-        </TouchableOpacity>
-        {mode === 'TRIP' && activeTripId && (
-          <TouchableOpacity onPress={handleQR}>
-            <Text style={styles.qrBadge}>[QR]</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Content */}
-      {isLoading ? (
-        <View style={{ flex: 1 }}>{[1, 2, 3, 4, 5].map(i => <ExpenseRowSkeleton key={i} />)}</View>
-      ) : (
-        <View style={styles.content}>
-          {mode === 'TRIP' ? renderTripMode() : renderPersonalMode()}
+          {streak && streak.currentStreak > 0 && (
+            <Text style={styles.streakBadge}>{streak.currentStreak}🔥</Text>
+          )}
         </View>
-      )}
 
-      {/* Voice HUD */}
-      {(voiceState.stage === 'parsed' || voiceState.stage === 'committing') && (
-        <VoiceHUD state={voiceState} onCancel={voice.cancelCommit} onConfirm={voice.confirmImmediately} onEdit={() => {}} />
-      )}
+        {/* Mode Bar */}
+        <View style={styles.modeBar}>
+          <TouchableOpacity onPress={handleModeSwitch} style={styles.modeSwitch}>
+            <Text style={styles.modeText}>
+              MODE: {mode === 'PERSONAL' ? '/PERSONAL' : `#${activeTrip?.name?.toLowerCase().replace(/\s+/g, '-') ?? 'NO-TRIP'}`}
+            </Text>
+          </TouchableOpacity>
+          {mode === 'TRIP' && activeTripId && (
+            <TouchableOpacity onPress={handleQR}>
+              <Text style={styles.qrBadge}>QR</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-      {/* CLI Input Bar */}
-      <CLIInputBar
-        visible={showCLIBar}
-        onSubmit={handleCLISubmit}
-        onClose={() => setShowCLIBar(false)}
-      />
-
-      {/* Voice FAB + CLI toggle */}
-      <View style={styles.fabRow}>
-        <TouchableOpacity style={styles.cliToggle} onPress={() => { Haptics.selectionAsync(); setShowCLIBar(!showCLIBar); }}>
-          <Ionicons name="terminal-outline" size={20} color="#888888" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.fabInner, isRecording && styles.fabActive]}
-          onPress={handleVoicePress}
-          activeOpacity={0.7}
-        >
-          <Ionicons name={isRecording ? 'mic' : 'mic-outline'} size={24} color={isRecording ? '#000000' : '#00FF66'} />
-        </TouchableOpacity>
-      </View>
-
-      {/* P2P Sync Modal */}
-      {activeTrip && (
-        <P2PSyncModal
-          visible={showSyncModal}
-          trip={activeTrip}
-          onClose={() => setShowSyncModal(false)}
-          onSyncComplete={handleCommit}
+        {/* Voice HUD */}
+        <VoiceHUD
+          state={voiceState}
+          onConfirm={voice.confirmImmediately}
+          onCancel={voice.cancelCommit}
+          onEdit={() => setShowCLIBar(true)}
         />
-      )}
 
-      {/* Dock */}
-      <Dock mode={mode} activeTripId={activeTripId} onSettle={handleSettle} onQR={handleQR} />
-    </View>
+        {/* Content */}
+        <View style={styles.content}>
+          {isLoading ? (
+            <View style={{ padding: 16, gap: 12 }}>
+              <ExpenseRowSkeleton />
+              <ExpenseRowSkeleton />
+              <ExpenseRowSkeleton />
+            </View>
+          ) : (
+            <FlatList
+              data={[]}
+              renderItem={() => null}
+              ListHeaderComponent={mode === 'TRIP' ? renderTripMode() : renderPersonalMode()}
+              contentContainerStyle={styles.list}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00FF66" colors={['#00FF66']} />
+              }
+            />
+          )}
+        </View>
+
+        {/* CLI Input Bar */}
+        <CLIInputBar
+          visible={showCLIBar}
+          onSubmit={handleCLISubmit}
+          onClose={() => setShowCLIBar(false)}
+        />
+
+        {/* Voice FAB + CLI toggle */}
+        <View style={styles.fabRow}>
+          <TouchableOpacity style={styles.cliToggle} onPress={() => { Haptics.selectionAsync(); setShowCLIBar(!showCLIBar); }}>
+            <Ionicons name="terminal-outline" size={20} color="#888888" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.fabInner, isRecording && styles.fabActive]}
+            onPress={handleVoicePress}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={isRecording ? 'mic' : 'mic-outline'} size={24} color={isRecording ? '#000000' : '#00FF66'} />
+          </TouchableOpacity>
+        </View>
+
+        {/* P2P Sync Modal */}
+        {activeTrip && (
+          <P2PSyncModal
+            visible={showSyncModal}
+            trip={activeTrip}
+            onClose={() => setShowSyncModal(false)}
+            onSyncComplete={handleCommit}
+          />
+        )}
+
+        {/* Dock */}
+        <Dock mode={mode} activeTripId={activeTripId} onSettle={handleSettle} onQR={handleQR} />
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
