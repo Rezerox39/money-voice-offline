@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   Platform, RefreshControl, KeyboardAvoidingView,
-  PermissionsAndroid,
+  PermissionsAndroid, Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,8 +19,6 @@ import { ExpenseRowSkeleton } from '../src/components/LoadingSkeleton';
 import { recordActivity, getStreakData, StreakData } from '../src/lib/streak';
 import { computePoolTelemetry } from '../src/lib/debt';
 import { CURRENCIES } from '../src/types';
-
-const KEYBOARD_OFFSET = Platform.OS === 'ios' ? 0 : 20;
 
 function BurnBar({ remaining, total }: { remaining: number; total: number }) {
   const pct = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
@@ -39,6 +37,13 @@ export default function ChannelScreen() {
   const [streak, setStreak] = useState<StreakData | null>(null);
   const [showCLIBar, setShowCLIBar] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -60,6 +65,7 @@ export default function ChannelScreen() {
   const voice = useVoiceExpense(activeTrip, handleCommit);
   const voiceState = voice.state;
   const isRecording = voiceState.stage === 'listening' || voiceState.isRecording;
+  const hideBottomUI = keyboardVisible || showCLIBar;
 
   async function onRefresh() {
     setRefreshing(true);
@@ -98,7 +104,6 @@ export default function ChannelScreen() {
 
     if (voiceState.stage === "idle" || voiceState.stage === "error") {
       try {
-        // Request mic permission explicitly before starting STT
         let granted = false;
         if (Platform.OS === "android") {
           const result = await PermissionsAndroid.request(
@@ -126,6 +131,8 @@ export default function ChannelScreen() {
 
   function handleCLISubmit(text: string) {
     voice.submitText(text);
+    Keyboard.dismiss();
+    setShowCLIBar(false);
   }
 
   function renderTripMode() {
@@ -220,9 +227,9 @@ export default function ChannelScreen() {
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={KEYBOARD_OFFSET}
+      keyboardVerticalOffset={0}
     >
-      <View style={[styles.container, { paddingTop: Math.max(insets.top, 32), paddingBottom: Math.max(insets.bottom, 16) }]}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 32), paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Status Bar */}
         <View style={styles.statusBar}>
           <Text style={styles.statusDot}>●</Text>
@@ -275,26 +282,28 @@ export default function ChannelScreen() {
           )}
         </View>
 
-        {/* CLI Input Bar */}
+        {/* CLI Input Bar — pinned above keyboard */}
         <CLIInputBar
           visible={showCLIBar}
           onSubmit={handleCLISubmit}
-          onClose={() => setShowCLIBar(false)}
+          onClose={() => { setShowCLIBar(false); Keyboard.dismiss(); }}
         />
 
-        {/* Voice FAB + CLI toggle */}
-        <View style={styles.fabRow}>
-          <TouchableOpacity style={styles.cliToggle} onPress={() => { Haptics.selectionAsync(); setShowCLIBar(!showCLIBar); }}>
-            <Ionicons name="terminal-outline" size={20} color="#888888" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.fabInner, isRecording && styles.fabActive]}
-            onPress={handleVoicePress}
-            activeOpacity={0.7}
-          >
-            <Ionicons name={isRecording ? 'mic' : 'mic-outline'} size={24} color={isRecording ? '#000000' : '#00FF66'} />
-          </TouchableOpacity>
-        </View>
+        {/* Voice FAB + CLI toggle — HIDDEN when keyboard/CLI is active */}
+        {!hideBottomUI && (
+          <View style={styles.fabRow}>
+            <TouchableOpacity style={styles.cliToggle} onPress={() => { Haptics.selectionAsync(); setShowCLIBar(!showCLIBar); }}>
+              <Ionicons name="terminal-outline" size={20} color="#888888" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.fabInner, isRecording && styles.fabActive]}
+              onPress={handleVoicePress}
+              activeOpacity={0.7}
+            >
+              <Ionicons name={isRecording ? 'mic' : 'mic-outline'} size={24} color={isRecording ? '#000000' : '#00FF66'} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* P2P Sync Modal */}
         {activeTrip && (
@@ -306,8 +315,10 @@ export default function ChannelScreen() {
           />
         )}
 
-        {/* Dock */}
-        <Dock mode={mode} activeTripId={activeTripId} onSettle={handleSettle} onQR={handleQR} />
+        {/* Dock — HIDDEN when keyboard/CLI is active */}
+        {!hideBottomUI && (
+          <Dock mode={mode} activeTripId={activeTripId} onSettle={handleSettle} onQR={handleQR} />
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -350,7 +361,7 @@ const styles = StyleSheet.create({
   personalTitle: { fontFamily: 'monospace', fontSize: 13, color: '#E0E0E0' },
   personalMeta: { fontFamily: 'monospace', fontSize: 10, color: '#555555' },
   personalAmount: { fontFamily: 'monospace', fontSize: 14, color: '#FFB000', fontWeight: '700' },
-  list: { paddingBottom: 160 },
+  list: { paddingBottom: 40 },
   fabRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 16, paddingVertical: 8, zIndex: 50 },
   cliToggle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1F1F1F', borderWidth: 1, borderColor: '#333333', justifyContent: 'center', alignItems: 'center' },
   fabInner: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#1F1F1F', borderWidth: 2, borderColor: '#00FF66', justifyContent: 'center', alignItems: 'center' },

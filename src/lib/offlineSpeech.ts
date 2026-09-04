@@ -1,11 +1,20 @@
 // ─────────────────────────────────────────────────────────────────
 // offlineSpeech.ts — Speech-to-text engine
-// Uses expo-speech-recognition. Tries on-device first, falls back
-// to network speech if no offline model is available.
+// Uses expo-speech-recognition with defensive module binding.
+// Falls back gracefully if native module is not linked.
 // ─────────────────────────────────────────────────────────────────
 
-// @ts-ignore — expo-speech-recognition runtime API differs from bundled types
-const ExpoSpeechRecognition = require('expo-speech-recognition').default ?? require('expo-speech-recognition');
+let ExpoSpeechRecognition: any = null;
+let moduleAvailable = false;
+
+try {
+  const mod = require('expo-speech-recognition');
+  ExpoSpeechRecognition = mod?.default ?? mod;
+  // Verify the module has the expected start method
+  moduleAvailable = ExpoSpeechRecognition && typeof ExpoSpeechRecognition.start === 'function';
+} catch {
+  moduleAvailable = false;
+}
 
 export type OfflineSTTState = 'idle' | 'listening' | 'processing' | 'error';
 
@@ -20,138 +29,104 @@ export interface OfflineSTTError {
   isOfflineModelMissing: boolean;
 }
 
-// ── Configuration ──────────────────────────────────────────────────
-
-const BASE_CONFIG = {
-  lang: 'en-IN',
-  addsPunctuation: false,
-  interimResults: false,
-  maxAlternatives: 1,
-};
-
 // ── Public API ─────────────────────────────────────────────────────
 
-/**
- * Check if the device supports on-device recognition.
- */
+export function isModuleAvailable(): boolean {
+  return moduleAvailable;
+}
+
 export async function isOfflineRecognitionAvailable(): Promise<boolean> {
+  if (!moduleAvailable) return false;
   try {
-    return ExpoSpeechRecognition.supportsOnDeviceRecognition();
+    return ExpoSpeechRecognition.supportsOnDeviceRecognition?.() ?? false;
   } catch {
     return false;
   }
 }
 
 /**
- * Start speech recognition. Tries offline first, falls back to
- * whatever speech engine the device has available.
- * No longer hard-blocks if offline model is missing.
+ * Start speech recognition. Returns immediately with an error result
+ * if the native module is not linked.
  */
 export function startOfflineRecognition(): Promise<OfflineSTTResult> {
   return new Promise((resolve, reject) => {
+    if (!moduleAvailable || !ExpoSpeechRecognition) {
+      reject({
+        code: 'module-not-available',
+        message: 'Speech engine not available on this device.',
+        isOfflineModelMissing: false,
+      } satisfies OfflineSTTError);
+      return;
+    }
+
     let hasResolved = false;
 
-    // Set up event handlers before starting
-    const removeResultListener = ExpoSpeechRecognition.addListener(
-      'result',
-      (event: any) => {
-        if (hasResolved) return;
-        if (event.isFinal && event.results.length > 0) {
-          hasResolved = true;
-          const best = event.results[0];
-          ExpoSpeechRecognition.stop();
-          cleanup();
-          resolve({
-            transcript: best.transcript,
-            confidence: best.confidence,
-          });
-        }
-      }
-    );
+    function safeRemove(listener: any) {
+      try { listener?.remove?.(); } catch {}
+    }
 
-    const removeErrorListener = ExpoSpeechRecognition.addListener(
-      'error',
-      (event: any) => {
-        if (hasResolved) return;
+    const removeResultListener = ExpoSpeechRecognition.addListener?.('result', (event: any) => {
+      if (hasResolved) return;
+      if (event.isFinal && event.results?.length > 0) {
         hasResolved = true;
+        const best = event.results[0];
+        try { ExpoSpeechRecognition.stop?.(); } catch {}
         cleanup();
-
-        // Map error codes to user-friendly messages
-        const code = event.error;
-        let message = `Speech recognition error: ${code}`;
-        if (code === 'not-allowed' || code === 'service-not-allowed') {
-          message = 'Microphone permission denied. Grant permission in Settings.';
-        } else if (code === 'no-speech') {
-          message = 'No speech detected. Try again.';
-        } else if (code === 'network' || code === 'network-timeout') {
-          message = 'Network unavailable for speech. Check your connection.';
-        } else if (code === 'language-not-supported') {
-          message = 'Language not supported by this device.';
-        } else if (code === 'client') {
-          message = 'Speech service unavailable. Is Google app installed?';
-        }
-
-        reject({
-          code,
-          message,
-          isOfflineModelMissing: code === 'service-not-allowed',
-        } satisfies OfflineSTTError);
+        resolve({ transcript: best.transcript, confidence: best.confidence });
       }
-    );
+    });
 
-    const removeEndListener = ExpoSpeechRecognition.addListener('end', () => {
+    const removeErrorListener = ExpoSpeechRecognition.addListener?.('error', (event: any) => {
+      if (hasResolved) return;
+      hasResolved = true;
+      cleanup();
+      const code = event.error || 'unknown';
+      let message = `Speech error: ${code}`;
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        message = 'Microphone permission denied.';
+      } else if (code === 'no-speech') {
+        message = 'No speech detected. Try again.';
+      } else if (code === 'client') {
+        message = 'Speech service unavailable.';
+      }
+      reject({ code, message, isOfflineModelMissing: code === 'service-not-allowed' } satisfies OfflineSTTError);
+    });
+
+    const removeEndListener = ExpoSpeechRecognition.addListener?.('end', () => {
       cleanup();
       if (!hasResolved) {
         hasResolved = true;
-        reject({
-          code: 'no-speech',
-          message: 'No speech detected. Try again.',
-          isOfflineModelMissing: false,
-        } satisfies OfflineSTTError);
+        reject({ code: 'no-speech', message: 'No speech detected.', isOfflineModelMissing: false } satisfies OfflineSTTError);
       }
     });
 
     function cleanup() {
-      removeResultListener();
-      removeErrorListener();
-      removeEndListener();
+      safeRemove(removeResultListener);
+      safeRemove(removeErrorListener);
+      safeRemove(removeEndListener);
     }
 
-    // Try offline first, fall back to whatever is available
     let useOffline = false;
+    try { useOffline = ExpoSpeechRecognition.supportsOnDeviceRecognition?.() ?? false; } catch {}
+
     try {
-      useOffline = ExpoSpeechRecognition.supportsOnDeviceRecognition();
-    } catch {
-      useOffline = false;
+      ExpoSpeechRecognition.start({ ...BASE_CONFIG, requiresOnDeviceRecognition: useOffline });
+    } catch (err: any) {
+      cleanup();
+      hasResolved = true;
+      reject({ code: 'start-failed', message: err?.message || 'Failed to start speech engine.', isOfflineModelMissing: false } satisfies OfflineSTTError);
     }
-
-    const config = {
-      ...BASE_CONFIG,
-      requiresOnDeviceRecognition: useOffline,
-    };
-
-    ExpoSpeechRecognition.start(config);
   });
 }
 
-/**
- * Stop any active recognition session.
- */
 export function stopRecognition(): void {
-  try {
-    ExpoSpeechRecognition.stop();
-  } catch {
-    // Ignore — may not be running
-  }
+  if (!moduleAvailable) return;
+  try { ExpoSpeechRecognition.stop?.(); } catch {}
 }
 
-/**
- * Abort recognition immediately (no partial results kept).
- */
 export function abortRecognition(): void {
-  try {
-    ExpoSpeechRecognition.abort();
-  } catch {
-    // Ignore
-  }
+  if (!moduleAvailable) return;
+  try { ExpoSpeechRecognition.abort?.(); } catch {}
 }
+
+const BASE_CONFIG = { lang: 'en-IN', addsPunctuation: false, interimResults: false, maxAlternatives: 1 };
