@@ -18,6 +18,41 @@ export interface TripExpense {
   splitBetween: SplitShare[];
   category: string;
   updatedAt: number;
+  poolDeposits?: PoolDeposit[];
+}
+
+
+
+
+export interface PersonalExpense {
+  id: string;
+  title: string;
+  amount: number;
+  category: string;
+  note?: string;
+  createdAt: number;
+}
+
+export interface PoolDeposit {
+  id: string;
+  tripId: string;
+  memberId: string;
+  amount: number;
+  createdAt: number;
+}
+
+export interface PoolTelemetry {
+  totalDeposited: number;
+  totalSpentFromPool: number;
+  remainingBalance: number;
+  burnRatePercent: number;
+}
+
+export interface PoolRefund {
+  memberId: string;
+  name: string;
+  deposited: number;
+  refundAmount: number;
 }
 
 export interface Trip {

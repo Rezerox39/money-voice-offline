@@ -1,6 +1,16 @@
 import { useState, useCallback, useRef } from 'react';
-import { Platform } from 'react-native';
-import { parseVoiceInput, formatParsedExpense, formatParsedQuery, formatParsedCommand } from '../lib/voiceParser';
+import {
+  startOfflineRecognition,
+  stopRecognition,
+  checkOfflineModelStatus,
+  type OfflineSTTError,
+} from '../lib/offlineSpeech';
+import {
+  parseVoiceInput,
+  formatParsedExpense,
+  formatParsedQuery,
+  formatParsedCommand,
+} from '../lib/voiceParser';
 import {
   audioParseSuccess,
   audioParseError,
@@ -40,7 +50,6 @@ export function useVoiceEngine({
   const [displayText, setDisplayText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const recognitionRef = useRef<any>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -50,60 +59,35 @@ export function useVoiceEngine({
     setError(null);
     stopSpeaking();
 
-    const SpeechRecognition =
-      (globalThis as any).SpeechRecognition ||
-      (globalThis as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setState('processing');
-      setError('Speech recognition not available. Use manual input.');
-      setState('idle');
+    // Pre-flight: verify offline model is installed
+    const modelStatus = await checkOfflineModelStatus();
+    if (!modelStatus.available) {
+      setError(modelStatus.message);
       return;
     }
 
+    setState('listening');
+
     try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-IN';
-      recognition.maxAlternatives = 1;
-
-      recognitionRef.current = recognition;
-      setState('listening');
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        processTranscript(transcript);
-      };
-
-      recognition.onerror = (event: any) => {
-        if (event.error === 'no-speech') {
-          setError('No speech detected. Try again.');
-        } else {
-          setError(`Recognition error: ${event.error}`);
-        }
-        audioParseError();
-        setState('idle');
-      };
-
-      recognition.onend = () => {
-        if (stateRef.current === 'listening') {
-          setState('idle');
-        }
-      };
-
-      recognition.start();
-    } catch {
-      setError('Could not start speech recognition.');
+      const result = await startOfflineRecognition();
+      // Process the transcript through the parser
+      await processTranscript(result.transcript);
+    } catch (err: any) {
+      const sttError = err as OfflineSTTError;
+      if (sttError.isOfflineModelMissing) {
+        setError(sttError.message);
+      } else if (sttError.code === 'no-speech') {
+        setError('No speech detected. Try again.');
+      } else {
+        setError(sttError.message || 'Recognition failed.');
+      }
+      audioParseError();
       setState('idle');
     }
   }, [activeTrip]);
 
   const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
-    }
+    stopRecognition();
     setState('idle');
   }, []);
 
@@ -114,44 +98,47 @@ export function useVoiceEngine({
       try {
         const parsed = parseVoiceInput(transcript, memberNames);
 
-        if (parsed.type === 'command') {
+        if (parsed.type === 'command' && 'intent' in parsed) {
           const display = formatParsedCommand(parsed);
           setDisplayText(display);
 
-          switch (parsed.command) {
-            case 'undo':
+          switch (parsed.intent) {
+            case 'COMMAND_UNDO':
               setError('Undo not yet implemented');
               break;
-            case 'showQR':
+            case 'COMMAND_QR':
               onNavigate?.('/trips/qr');
               break;
-            case 'shareWhatsApp':
+            case 'COMMAND_WHATSAPP':
               onNavigate?.('/settle');
               break;
-            case 'readSettlement':
+            case 'COMMAND_READ_SETTLEMENT':
               if (activeTrip) {
                 const settlements = simplifyDebts(activeTrip.members, activeTrip.expenses);
                 const text = settlements
                   .map((s) => {
-                    const from = activeTrip.members.find((m) => m.id === s.from)?.name ?? 'Unknown';
-                    const to = activeTrip.members.find((m) => m.id === s.to)?.name ?? 'Unknown';
+                    const from =
+                      activeTrip.members.find((m) => m.id === s.from)?.name ?? 'Unknown';
+                    const to =
+                      activeTrip.members.find((m) => m.id === s.to)?.name ?? 'Unknown';
                     return `${from} pays ${to} ${s.amount}`;
                   })
                   .join('. ');
                 await speakSettlement(
-                  `Total trip expense: ${activeTrip.expenses.reduce((s, e) => s + e.amount, 0)}. ${text}. All debts cleared.`
+                  `Total trip expense: ${activeTrip.expenses
+                    .reduce((s, e) => s + e.amount, 0)}. ${text}. All debts cleared.`
                 );
               }
               break;
-            case 'help':
+            case 'COMMAND_HELP':
               setDisplayText(
                 'COMMANDS: "undo last" | "switch to [trip]" | "show QR" | ' +
-                '"share on WhatsApp" | "read settlement" | "who owes what"'
+                  '"share on WhatsApp" | "read settlement" | "who owes what"'
               );
               break;
-            case 'cancel':
+            case 'COMMAND_CANCEL':
               break;
-            case 'switchTrip':
+            case 'COMMAND_SWITCH':
               if (parsed.tripName) {
                 onNavigate?.(`/?switch=${encodeURIComponent(parsed.tripName)}`);
               }
@@ -163,42 +150,39 @@ export function useVoiceEngine({
           return;
         }
 
-        if (parsed.type === 'query') {
+        if (parsed.type === 'query' && 'intent' in parsed) {
           const display = formatParsedQuery(parsed);
           setDisplayText(display);
 
-          switch (parsed.query) {
-            case 'settle':
-            case 'whoOwesWhat':
+          switch (parsed.intent) {
+            case 'QUERY_SETTLEMENT':
+            case 'QUERY_SETTLEMENT':
               onNavigate?.('/settle');
               break;
-            case 'totalToday':
-            case 'totalAll':
+            case 'QUERY_TOTAL':
+            case 'QUERY_TOTAL':
               if (activeTrip) {
                 const total = activeTrip.expenses.reduce((s, e) => s + e.amount, 0);
                 setDisplayText(`${display}: ₹${total.toLocaleString('en-IN')}`);
               }
               break;
-            case 'howMuchPaid':
+            case 'QUERY_MEMBER':
               if (activeTrip && parsed.memberName) {
                 const member = activeTrip.members.find(
-                  (m) => m.name.toLowerCase().startsWith(parsed.memberName!.toLowerCase())
+                  (m) =>
+                    m.name.toLowerCase().startsWith(parsed.memberName!.toLowerCase())
                 );
                 if (member) {
                   const paid = activeTrip.expenses
                     .filter((e) => e.paidBy === member.id)
                     .reduce((s, e) => s + e.amount, 0);
-                  setDisplayText(`${member.name} paid: ₹${paid.toLocaleString('en-IN')}`);
+                  setDisplayText(
+                    `${member.name} paid: ₹${paid.toLocaleString('en-IN')}`
+                  );
                 }
               }
               break;
-            case 'recentExpenses':
-              if (activeTrip && activeTrip.expenses.length > 0) {
-                const recent = activeTrip.expenses.slice(0, 5);
-                const list = recent.map((e) => `₹${e.amount} ${e.title}`).join(', ');
-                setDisplayText(`RECENT: ${list}`);
-              }
-              break;
+
           }
 
           await audioParseSuccess();
@@ -207,7 +191,7 @@ export function useVoiceEngine({
         }
 
         // Expense → safety window
-        const display = formatParsedExpense(parsed, memberNames);
+        const display = parsed.type === 'expense' ? formatParsedExpense(parsed, memberNames) : '';
         setDisplayText(display);
         setPendingEntry({
           rawTranscript: transcript,
@@ -257,7 +241,10 @@ export function useVoiceEngine({
           );
 
           if (validMemberIds.length === 0) {
-            splits = computeEqualSplit(parsed.amount, activeTrip.members.map((m) => m.id));
+            splits = computeEqualSplit(
+              parsed.amount,
+              activeTrip.members.map((m) => m.id)
+            );
           } else {
             splits = computeEqualSplit(parsed.amount, validMemberIds);
           }

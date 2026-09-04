@@ -3,7 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
   "include": [
@@ -15,6 +17,7 @@
   "exclude": [
     "src/__tests__/**",
     "jest.config.js",
-    "tsconfig.test.json"
+    "tsconfig.test.json",
+    "src/__mocks__/**"
   ]
 }

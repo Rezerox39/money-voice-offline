@@ -1,4 +1,4 @@
-import { Member, TripExpense, SplitShare, SettlementTransaction } from '../types';
+import { Member, TripExpense, SplitShare, SettlementTransaction, PoolDeposit, PoolTelemetry, PoolRefund } from '../types';
 
 /**
  * Compute an exact equal split using minor currency units (cents/paise)
@@ -98,4 +98,98 @@ export function computeBalances(
   }
 
   return netBalances;
+}
+
+// ── Pool Telemetry (event-sourced, computed on read) ───────────────
+
+export function computePoolTelemetry(
+  deposits: PoolDeposit[],
+  expenses: TripExpense[]
+): PoolTelemetry {
+  const totalDeposited = deposits.reduce((sum, d) => sum + d.amount, 0);
+  const totalSpentFromPool = expenses
+    .filter((e) => e.paidBy === 'POOL')
+    .reduce((sum, e) => sum + e.amount, 0);
+  const remainingBalance = totalDeposited - totalSpentFromPool;
+  const burnRatePercent =
+    totalDeposited > 0
+      ? Math.round((totalSpentFromPool / totalDeposited) * 10000) / 100
+      : 0;
+
+  return { totalDeposited, totalSpentFromPool, remainingBalance, burnRatePercent };
+}
+
+/**
+ * Compute proportional refunds for trip dissolution.
+ * Each member gets back their deposited amount minus their proportional
+ * share of pool expenses (if any). Uses minor-unit precision with
+ * remainder distribution to prevent cent leakage.
+ */
+export function computePoolRefunds(
+  deposits: PoolDeposit[],
+  expenses: TripExpense[],
+  members: Member[]
+): PoolRefund[] {
+  const totalDeposited = deposits.reduce((sum, d) => sum + d.amount, 0);
+  const totalSpentFromPool = expenses
+    .filter((e) => e.paidBy === 'POOL')
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  // If no pool expenses or no deposits, refund exact deposited amounts
+  if (totalSpentFromPool === 0 || totalDeposited === 0) {
+    const byMember = new Map<string, number>();
+    for (const d of deposits) {
+      byMember.set(d.memberId, (byMember.get(d.memberId) ?? 0) + d.amount);
+    }
+    return members
+      .filter((m) => (byMember.get(m.id) ?? 0) > 0)
+      .map((m) => ({
+        memberId: m.id,
+        name: m.name,
+        deposited: byMember.get(m.id)!,
+        refundAmount: byMember.get(m.id)!,
+      }));
+  }
+
+  // Each member's share of pool expenses = (their deposits / total deposited) * total spent
+  const memberDeposited = new Map<string, number>();
+  for (const d of deposits) {
+    memberDeposited.set(d.memberId, (memberDeposited.get(d.memberId) ?? 0) + d.amount);
+  }
+
+  // Use minor units to avoid floating point issues
+  const totalDepositedMinor = Math.round(totalDeposited * 100);
+  const totalSpentMinor = Math.round(totalSpentFromPool * 100);
+
+  const refunds: PoolRefund[] = [];
+  let spentAllocatedMinor = 0;
+
+  const entries = Array.from(memberDeposited.entries());
+  for (let i = 0; i < entries.length; i++) {
+    const [memberId, deposited] = entries[i];
+    const depositedMinor = Math.round(deposited * 100);
+
+    // Proportional share of expenses
+    let spentShareMinor: number;
+    if (i === entries.length - 1) {
+      // Last member absorbs any rounding remainder
+      spentShareMinor = totalSpentMinor - spentAllocatedMinor;
+    } else {
+      spentShareMinor = Math.round((depositedMinor / totalDepositedMinor) * totalSpentMinor);
+      spentAllocatedMinor += spentShareMinor;
+    }
+
+    const refundMinor = depositedMinor - spentShareMinor;
+    const refundAmount = Math.max(0, refundMinor / 100);
+
+    const member = members.find((m) => m.id === memberId);
+    refunds.push({
+      memberId,
+      name: member?.name ?? memberId,
+      deposited,
+      refundAmount: Math.round(refundAmount * 100) / 100,
+    });
+  }
+
+  return refunds.filter((r) => r.refundAmount > 0);
 }

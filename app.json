@@ -21,10 +21,11 @@
       "package": "com.swoyef.moneyvoice",
       "permissions": [
         "RECORD_AUDIO",
-        "RECEIVE_BOOT_COMPLETED",
-        "SCHEDULE_EXACT_ALARM",
-        "android.permission.CAMERA"
-      ]
+        "CAMERA",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED"
+      ],
+      "backgroundColor": "#000000"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -40,7 +41,8 @@
         {
           "cameraPermission": "Money Voice needs camera access to scan QR codes for trip sync."
         }
-      ]
+      ],
+      "expo-speech-recognition"
     ],
     "experiments": {
       "typedRoutes": true

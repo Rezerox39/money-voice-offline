@@ -1,6 +1,11 @@
+// ─────────────────────────────────────────────────────────────────
+// [tripId].tsx — AMOLED Terminal Settlement Screen
+// [▶ SPEAK SETTLEMENT] + [⚡ PAY VIA UPI] per settlement line.
+// ─────────────────────────────────────────────────────────────────
+
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
-import { useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SettlementCard } from '../../src/components/SettlementCard';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -8,16 +13,20 @@ import { getTripById } from '../../src/lib/database';
 import { simplifyDebts } from '../../src/lib/debt';
 import { shareSettlement } from '../../src/lib/settlement';
 import { computeBalances } from '../../src/lib/debt';
+import { speakSettlementSummary, stopSpeaking } from '../../src/lib/speechSynthesis';
 import { Trip, CURRENCIES } from '../../src/types';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../../src/constants';
 
 export default function SettlementScreen() {
   const { tripId } = useLocalSearchParams<{ tripId: string }>();
+  const router = useRouter();
   const [trip, setTrip] = useState<Trip | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       loadTrip();
+      return () => { stopSpeaking(); setIsSpeaking(false); };
     }, [tripId])
   );
 
@@ -25,6 +34,24 @@ export default function SettlementScreen() {
     if (!tripId) return;
     const t = await getTripById(tripId);
     setTrip(t);
+  }
+
+  async function handleSpeakSettlement() {
+    if (!trip) return;
+    if (isSpeaking) {
+      stopSpeaking();
+      setIsSpeaking(false);
+      return;
+    }
+    const settlements = simplifyDebts(trip.members, trip.expenses);
+    const totalExpenses = trip.expenses.reduce((s, e) => s + e.amount, 0);
+    const memberMap = new Map(trip.members.map((m) => [m.id, m.name]));
+    setIsSpeaking(true);
+    try {
+      await speakSettlementSummary(trip.name, totalExpenses, settlements, memberMap);
+    } finally {
+      setIsSpeaking(false);
+    }
   }
 
   if (!trip) {
@@ -38,13 +65,21 @@ export default function SettlementScreen() {
   const settlements = simplifyDebts(trip.members, trip.expenses);
   const balances = computeBalances(trip.members, trip.expenses);
   const currency = CURRENCIES[trip.currency] || { symbol: '₹', code: 'INR' };
-  const memberMap = new Map(trip.members.map((m) => [m.id, m]));
 
   return (
     <View style={styles.container}>
-      {/* Balance Summary */}
+      {/* Terminal Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Text style={styles.backText}>{'<< '}</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>SETTLE</Text>
+        <View style={{ width: 32 }} />
+      </View>
+
+      {/* Balance Matrix */}
       <View style={styles.balanceSection}>
-        <Text style={styles.balanceTitle}>Net Balances</Text>
+        <Text style={styles.sectionLabel}>NET BALANCES</Text>
         {trip.members.map((m) => {
           const balance = balances.get(m.id) || 0;
           const isPositive = balance > 0.01;
@@ -55,21 +90,36 @@ export default function SettlementScreen() {
               <Text
                 style={[
                   styles.balanceAmount,
-                  isPositive && styles.balancePositive,
-                  isNegative && styles.balanceNegative,
+                  isPositive && styles.positive,
+                  isNegative && styles.negative,
                 ]}
               >
-                {isPositive ? '+' : ''}
-                {currency.symbol}
-                {balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                {isPositive ? '+' : ''}{currency.symbol}{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </Text>
             </View>
           );
         })}
       </View>
 
-      {/* Settlements */}
-      <Text style={styles.sectionTitle}>Settlements ({settlements.length})</Text>
+      {/* Settlements Header */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionLabel}>SETTLEMENTS ({settlements.length})</Text>
+        {settlements.length > 0 && (
+          <TouchableOpacity
+            style={[styles.speakBtn, isSpeaking && styles.speakActive]}
+            onPress={handleSpeakSettlement}
+          >
+            <Ionicons
+              name={isSpeaking ? 'stop-circle' : 'volume-high'}
+              size={14}
+              color={isSpeaking ? '#FF3333' : '#00FF66'}
+            />
+            <Text style={[styles.speakText, isSpeaking && styles.speakTextActive]}>
+              {isSpeaking ? 'STOP' : '▶ SPEAK'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {settlements.length === 0 ? (
         <EmptyState
@@ -86,20 +136,20 @@ export default function SettlementScreen() {
               settlement={item}
               members={trip.members}
               currency={trip.currency}
+              tripName={trip.name}
             />
           )}
           contentContainerStyle={styles.list}
         />
       )}
 
-      {/* Share Button */}
+      {/* WhatsApp Share */}
       {settlements.length > 0 && (
         <TouchableOpacity
           style={styles.shareBtn}
           onPress={() => shareSettlement(trip, settlements)}
         >
-          <Ionicons name="logo-whatsapp" size={20} color={COLORS.white} />
-          <Text style={styles.shareBtnText}>Share via WhatsApp</Text>
+          <Text style={styles.shareBtnText}>💬 SHARE ON WHATSAPP</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -107,74 +157,46 @@ export default function SettlementScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
+  container: { flex: 1, backgroundColor: '#000000' },
+  loading: { color: '#555555', textAlign: 'center', marginTop: SPACING.xxxl, fontFamily: 'monospace' },
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: SPACING.lg, paddingTop: Platform.OS === 'android' ? SPACING.xxxl : SPACING.lg,
+    paddingBottom: SPACING.md, borderBottomWidth: 1, borderBottomColor: '#222222',
   },
-  loading: {
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: SPACING.xxxl,
-  },
+  backBtn: { padding: 8 },
+  backText: { fontFamily: 'monospace', fontSize: 14, color: '#00FF66' },
+  headerTitle: { fontFamily: 'monospace', fontSize: 16, color: '#00FF66', fontWeight: '700', letterSpacing: 2 },
   balanceSection: {
-    backgroundColor: COLORS.surface,
-    margin: SPACING.lg,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
-  },
-  balanceTitle: {
-    fontSize: FONT_SIZE.md,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.md,
+    backgroundColor: '#0A0A0A', margin: SPACING.lg, borderRadius: 4,
+    padding: SPACING.md, borderWidth: 1, borderColor: '#222222',
   },
   balanceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: SPACING.xs,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 4,
   },
-  balanceName: {
-    color: COLORS.text,
-    fontSize: FONT_SIZE.md,
+  balanceName: { fontFamily: 'monospace', fontSize: 12, color: '#E0E0E0' },
+  balanceAmount: { fontFamily: 'monospace', fontSize: 12, color: '#555555', fontWeight: '600' },
+  positive: { color: '#00FF66' },
+  negative: { color: '#FF3333' },
+  sectionHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md,
   },
-  balanceAmount: {
-    fontSize: FONT_SIZE.md,
-    fontWeight: '600',
-    color: COLORS.textMuted,
+  sectionLabel: { fontFamily: 'monospace', fontSize: 11, color: '#FFB000', letterSpacing: 1, fontWeight: '700' },
+  speakBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#003311', borderRadius: 4, paddingVertical: 4, paddingHorizontal: 10,
+    borderWidth: 1, borderColor: '#00FF66',
   },
-  balancePositive: {
-    color: COLORS.success,
-  },
-  balanceNegative: {
-    color: COLORS.danger,
-  },
-  sectionTitle: {
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '600',
-    color: COLORS.text,
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: SPACING.md,
-  },
-  list: {
-    paddingBottom: 100,
-  },
+  speakActive: { backgroundColor: '#330000', borderColor: '#FF3333' },
+  speakText: { fontFamily: 'monospace', fontSize: 10, color: '#00FF66', fontWeight: '700' },
+  speakTextActive: { color: '#FF3333' },
+  list: { paddingBottom: 100 },
   shareBtn: {
-    position: 'absolute',
-    bottom: SPACING.xl,
-    left: SPACING.lg,
-    right: SPACING.lg,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    backgroundColor: '#25D366',
-    borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.lg,
+    position: 'absolute', bottom: SPACING.xl, left: SPACING.lg, right: SPACING.lg,
+    backgroundColor: '#1F1F1F', borderRadius: 4, paddingVertical: SPACING.md,
+    borderWidth: 1, borderColor: '#00FF66', alignItems: 'center',
   },
-  shareBtnText: {
-    color: COLORS.white,
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '700',
-  },
+  shareBtnText: { fontFamily: 'monospace', fontSize: 13, color: '#00FF66', fontWeight: '700' },
 });
