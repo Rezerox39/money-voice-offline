@@ -13,6 +13,7 @@ import { VoiceHUD } from '../src/components/VoiceHUD';
 import { EmptyState } from '../src/components/EmptyState';
 import { Dock } from '../src/components/Dock';
 import { CLIInputBar } from '../src/components/CLIInputBar';
+import { P2PSyncModal } from '../src/components/P2PSyncModal';
 import { ExpenseRowSkeleton } from '../src/components/LoadingSkeleton';
 import { recordActivity, getStreakData, StreakData } from '../src/lib/streak';
 import { computePoolTelemetry } from '../src/lib/debt';
@@ -34,6 +35,7 @@ export default function ChannelScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [streak, setStreak] = useState<StreakData | null>(null);
   const [showCLIBar, setShowCLIBar] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -66,7 +68,12 @@ export default function ChannelScreen() {
 
   function handleModeSwitch() {
     Haptics.selectionAsync();
-    setMode(mode === 'PERSONAL' ? 'TRIP' : 'PERSONAL');
+    if (mode === 'PERSONAL') {
+      // Navigate to trip hub to select a trip
+      router.push('/trips');
+    } else {
+      setMode('PERSONAL');
+    }
   }
 
   function handleSettle() {
@@ -194,8 +201,10 @@ export default function ChannelScreen() {
     <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
       {/* Status Bar */}
       <View style={styles.statusBar}>
-        <Text style={styles.statusDot}>●</Text>
-        <Text style={styles.statusText}>OFFLINE MESH</Text>
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => { if (activeTrip) { Haptics.selectionAsync(); setShowSyncModal(true); } }}>
+          <Text style={styles.statusDot}>●</Text>
+          <Text style={styles.statusText}>OFFLINE MESH</Text>
+        </TouchableOpacity>
         {streak && streak.currentStreak > 0 && (
           <Text style={styles.streakBadge}>{streak.currentStreak}🔥</Text>
         )}
@@ -248,6 +257,16 @@ export default function ChannelScreen() {
           <Ionicons name={isRecording ? 'mic' : 'mic-outline'} size={24} color={isRecording ? '#000000' : '#00FF66'} />
         </TouchableOpacity>
       </View>
+
+      {/* P2P Sync Modal */}
+      {activeTrip && (
+        <P2PSyncModal
+          visible={showSyncModal}
+          trip={activeTrip}
+          onClose={() => setShowSyncModal(false)}
+          onSyncComplete={handleCommit}
+        />
+      )}
 
       {/* Dock */}
       <Dock mode={mode} activeTripId={activeTripId} onSettle={handleSettle} onQR={handleQR} />

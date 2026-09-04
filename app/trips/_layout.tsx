@@ -1,27 +1,20 @@
 import React from 'react';
 import { Stack } from 'expo-router';
-import { COLORS } from '../../src/constants';
 
 export default function TripsLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: COLORS.bg },
-        headerTintColor: COLORS.text,
-        headerTitleStyle: { fontWeight: '600' },
-        contentStyle: { backgroundColor: COLORS.bg },
+        headerShown: false,
+        contentStyle: { backgroundColor: '#000000' },
+        animation: 'none',
       }}
     >
-      <Stack.Screen name="new" options={{ title: 'New Trip' }} />
-      <Stack.Screen name="[id]" options={{ title: 'Trip Details' }} />
-      <Stack.Screen
-        name="expense/[id]"
-        options={{ title: 'Add Expense', presentation: 'modal' }}
-      />
-      <Stack.Screen
-        name="share-qr/[id]"
-        options={{ title: 'Share QR', presentation: 'modal' }}
-      />
+      <Stack.Screen name="index" />
+      <Stack.Screen name="new" />
+      <Stack.Screen name="[id]" />
+      <Stack.Screen name="expense/[id]" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="share-qr/[id]" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }

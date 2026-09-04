@@ -12,7 +12,7 @@ import {
   type OfflineSTTError,
 } from '../lib/offlineSpeech';
 import { parseVoiceInput, type ParseResult } from '../lib/voiceParser';
-import { addExpense, addPoolDeposit } from '../lib/database';
+import { addExpense, addPoolDeposit, appendLedgerEvent } from '../lib/database';
 import { computeEqualSplit } from '../lib/debt';
 import { audioParseSuccess, audioParseError } from '../lib/audioFeedback';
 import type { Trip } from '../types';
@@ -195,10 +195,23 @@ export function useVoiceExpense(
             splits,
             result.category
           );
+
+          // Queue for P2P sync
+          await appendLedgerEvent(trip.id, 'expense', result.title, 'create', {
+            title: result.title,
+            amount: result.amount,
+            paidBy: payerId,
+            splits,
+            category: result.category,
+          });
         } else if (result.type === 'pool' && result.intent === 'POOL_DEPOSIT') {
           const depositMemberId = result.payerId ?? trip.members[0]?.id;
           if (depositMemberId) {
             await addPoolDeposit(trip.id, depositMemberId, result.amount);
+            await appendLedgerEvent(trip.id, 'pool_deposit', depositMemberId, 'create', {
+              memberId: depositMemberId,
+              amount: result.amount,
+            });
           }
         }
         // Queries and commands don't write to DB

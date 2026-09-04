@@ -1,35 +1,31 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  TextInput,
-  StyleSheet,
-  Alert,
-  ScrollView,
+  View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet,
+  Alert, ScrollView, Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { ExpenseRow } from '../../src/components/ExpenseRow';
 import { EmptyState } from '../../src/components/EmptyState';
+import { P2PSyncModal } from '../../src/components/P2PSyncModal';
 import {
-  getTripById,
-  addMember,
-  deleteTrip,
-  deleteExpense,
+  getTripById, addMember, deleteTrip, deleteExpense, addPoolDeposit,
 } from '../../src/lib/database';
-
-import { simplifyDebts } from '../../src/lib/debt';
-import { Trip, CURRENCIES } from '../../src/types';
-import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../../src/constants';
+import { simplifyDebts, computePoolTelemetry } from '../../src/lib/debt';
+import { Trip, CURRENCIES, PoolDeposit } from '../../src/types';
 
 export default function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [newMemberName, setNewMemberName] = useState('');
   const [showMemberInput, setShowMemberInput] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [showPoolDeposit, setShowPoolDeposit] = useState(false);
+  const [poolAmount, setPoolAmount] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -39,319 +35,321 @@ export default function TripDetailScreen() {
 
   async function loadTrip() {
     if (!id) return;
-    const t = await getTripById(id);
-    setTrip(t);
+    try {
+      const t = await getTripById(id);
+      setTrip(t);
+    } catch (err) {
+      console.warn('[DB_RECOVERY] loadTrip failed:', err);
+    }
   }
 
   async function handleAddMember() {
     if (!newMemberName.trim() || !id) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await addMember(id, newMemberName.trim());
     setNewMemberName('');
     setShowMemberInput(false);
     loadTrip();
   }
 
+  async function handlePoolDeposit() {
+    if (!id || !trip || !poolAmount) return;
+    const amt = parseFloat(poolAmount);
+    if (isNaN(amt) || amt <= 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    const memberId = trip.members[0]?.id;
+    if (!memberId) return;
+    await addPoolDeposit(id, memberId, amt);
+    setPoolAmount('');
+    setShowPoolDeposit(false);
+    loadTrip();
+  }
+
   async function handleDeleteExpense(expenseId: string) {
     Alert.alert('Delete Expense', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteExpense(expenseId);
-          loadTrip();
-        },
-      },
+      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteExpense(expenseId); loadTrip(); } },
     ]);
   }
 
   async function handleDeleteTrip() {
     Alert.alert('Delete Trip', 'This action cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteTrip(id!);
-          router.back();
-        },
-      },
+      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteTrip(id!); router.back(); } },
     ]);
   }
 
-  function handleExportQR() {
-    if (!id) return;
-    router.push(`/trips/share-qr/${id}`);
-  }
-
   if (!trip) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.loading}>Loading...</Text>
-      </View>
-    );
+    return <View style={styles.container}><Text style={styles.loading}>Loading...</Text></View>;
   }
 
   const currency = CURRENCIES[trip.currency] || { symbol: '₹', code: 'INR' };
   const totalExpenses = trip.expenses.reduce((sum, e) => sum + e.amount, 0);
   const settlements = simplifyDebts(trip.members, trip.expenses);
+  const poolDeps = (trip as any).poolDeposits || [];
+  const poolTelemetry = computePoolTelemetry(poolDeps, trip.expenses);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.tripName}>{trip.name}</Text>
-          <Text style={styles.tripMeta}>
-            {currency.symbol}{totalExpenses.toLocaleString('en-IN', { minimumFractionDigits: 2 })} total · {trip.currency}
-          </Text>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Text style={styles.backText}>{'<<'}</Text>
+          </TouchableOpacity>
+          <View>
+            <Text style={styles.tripName}>#{trip.name.toLowerCase().replace(/\s+/g, '-')}</Text>
+            <Text style={styles.tripMeta}>
+              {currency.symbol}{totalExpenses.toLocaleString('en-IN')} total · {trip.currency}
+            </Text>
+          </View>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.headerBtn} onPress={handleExportQR}>
-            <Ionicons name="qr-code-outline" size={18} color={COLORS.primary} />
+          <TouchableOpacity style={styles.headerBtn} onPress={() => setShowSyncModal(true)}>
+            <Ionicons name="sync-outline" size={18} color="#FFB000" />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.headerBtn, { borderColor: COLORS.danger }]}
-            onPress={handleDeleteTrip}
-          >
-            <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
+          <TouchableOpacity style={styles.headerBtn} onPress={() => router.push(`/trips/share-qr/${trip.id}`)}>
+            <Ionicons name="qr-code-outline" size={18} color="#00FF66" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.headerBtn, { borderColor: '#FF3333' }]} onPress={handleDeleteTrip}>
+            <Ionicons name="trash-outline" size={18} color="#FF3333" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Members */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Members</Text>
-          <TouchableOpacity onPress={() => setShowMemberInput(!showMemberInput)}>
-            <Ionicons name="add-circle" size={24} color={COLORS.primary} />
-          </TouchableOpacity>
-        </View>
-
-        {showMemberInput && (
-          <View style={styles.memberInput}>
-            <TextInput
-              style={styles.input}
-              value={newMemberName}
-              onChangeText={setNewMemberName}
-              placeholder="Member name"
-              placeholderTextColor={COLORS.textMuted}
-              autoFocus
-            />
-            <TouchableOpacity style={styles.addBtn} onPress={handleAddMember}>
-              <Text style={styles.addBtnText}>Add</Text>
-            </TouchableOpacity>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Kitty Pool */}
+        {poolTelemetry.totalDeposited > 0 && (
+          <View style={styles.poolSection}>
+            <View style={styles.poolHeader}>
+              <Text style={styles.poolLabel}>KITTY POOL</Text>
+              <Text style={styles.poolAmount}>
+                {currency.symbol}{poolTelemetry.remainingBalance.toLocaleString('en-IN')}
+              </Text>
+            </View>
+            <View style={styles.poolBarBg}>
+              <View style={[styles.poolBarFill, {
+                width: `${Math.min(100, (1 - poolTelemetry.remainingBalance / poolTelemetry.totalDeposited) * 100)}%`,
+              }]} />
+            </View>
+            <Text style={styles.poolMeta}>
+              DEPOSITED: {currency.symbol}{poolTelemetry.totalDeposited.toLocaleString('en-IN')} · SPENT: {currency.symbol}{poolTelemetry.totalSpentFromPool.toLocaleString('en-IN')}
+            </Text>
           </View>
         )}
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.memberScroll}>
-          {trip.members.map((m) => (
-            <View key={m.id} style={styles.memberChip}>
-              <View style={styles.memberAvatar}>
-                <Text style={styles.memberAvatarText}>{m.name[0]}</Text>
-              </View>
-              <Text style={styles.memberName}>{m.name}</Text>
+        {/* Pool Deposit */}
+        {showPoolDeposit ? (
+          <View style={styles.poolDepositForm}>
+            <Text style={styles.poolDepositLabel}>DEPOSIT AMOUNT</Text>
+            <View style={styles.poolDepositRow}>
+              <TextInput
+                style={styles.poolDepositInput}
+                placeholder={`${currency.symbol}0`}
+                placeholderTextColor="#555555"
+                value={poolAmount}
+                onChangeText={setPoolAmount}
+                keyboardType="numeric"
+                autoFocus
+              />
+              <TouchableOpacity style={styles.poolDepositBtn} onPress={handlePoolDeposit}>
+                <Text style={styles.poolDepositBtnText}>ADD</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.poolCancelBtn} onPress={() => { setShowPoolDeposit(false); setPoolAmount(''); }}>
+                <Text style={styles.poolCancelBtnText}>X</Text>
+              </TouchableOpacity>
             </View>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Expenses */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Expenses</Text>
-        {trip.members.length >= 2 && (
-          <TouchableOpacity
-            style={styles.addExpenseBtn}
-            onPress={() => router.push(`/trips/expense/${trip.id}`)}
-          >
-            <Ionicons name="add" size={18} color={COLORS.white} />
-            <Text style={styles.addExpenseBtnText}>Add</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.poolDepositBtnMain} onPress={() => setShowPoolDeposit(true)}>
+            <Ionicons name="add-circle-outline" size={16} color="#FFB000" />
+            <Text style={styles.poolDepositBtnMainText}>ADD POOL DEPOSIT</Text>
           </TouchableOpacity>
         )}
-      </View>
 
-      {trip.expenses.length === 0 ? (
-        <EmptyState
-          icon="receipt-outline"
-          title="No expenses yet"
-          subtitle="Add members first, then start logging expenses."
-        />
-      ) : (
-        <FlatList
-          data={trip.expenses}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <ExpenseRow
-              expense={item}
-              members={trip.members}
-              currency={trip.currency}
-              onDelete={() => handleDeleteExpense(item.id)}
-            />
+        {/* Members */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>MEMBERS ({trip.members.length})</Text>
+            <TouchableOpacity onPress={() => setShowMemberInput(!showMemberInput)}>
+              <Ionicons name="person-add-outline" size={20} color="#00FF66" />
+            </TouchableOpacity>
+          </View>
+
+          {showMemberInput && (
+            <View style={styles.memberInput}>
+              <TextInput
+                style={styles.input}
+                value={newMemberName}
+                onChangeText={setNewMemberName}
+                placeholder="Name or call-sign"
+                placeholderTextColor="#555555"
+                autoFocus
+              />
+              <TouchableOpacity style={styles.addBtn} onPress={handleAddMember}>
+                <Text style={styles.addBtnText}>ADD</Text>
+              </TouchableOpacity>
+            </View>
           )}
-          contentContainerStyle={styles.list}
-        />
-      )}
 
-      {/* Settlements Button */}
-      {settlements.length > 0 && (
-        <TouchableOpacity
-          style={styles.settleBtn}
-          onPress={() => router.push(`/settle/${trip.id}`)}
-        >
-          <Ionicons name="cash-outline" size={20} color={COLORS.white} />
-          <Text style={styles.settleBtnText}>
-            View Settlements ({settlements.length})
-          </Text>
-        </TouchableOpacity>
+          <View style={styles.memberList}>
+            {trip.members.map((m, i) => (
+              <View key={m.id} style={styles.memberChip}>
+                <View style={styles.memberAvatar}>
+                  <Text style={styles.memberAvatarText}>{m.name[0].toUpperCase()}</Text>
+                </View>
+                <View style={styles.memberInfo}>
+                  <Text style={styles.memberName}>{m.name}{i === 0 ? ' (Host)' : ''}</Text>
+                  {m.upiOrHandle && <Text style={styles.memberUPI}>{m.upiOrHandle}</Text>}
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Expenses */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>EXPENSES ({trip.expenses.length})</Text>
+          {trip.members.length >= 2 && (
+            <TouchableOpacity
+              style={styles.addExpenseBtn}
+              onPress={() => router.push(`/trips/expense/${trip.id}`)}
+            >
+              <Ionicons name="add" size={16} color="#000000" />
+              <Text style={styles.addExpenseBtnText}>ADD</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {trip.expenses.length === 0 ? (
+          <EmptyState
+            icon="receipt-outline"
+            title="No expenses yet"
+            subtitle='Say "Petrol 1500 split with all" or tap ADD'
+          />
+        ) : (
+          trip.expenses.slice().reverse().map((item) => (
+            <View key={item.id}>
+              <ExpenseRow
+                expense={item}
+                members={trip.members}
+                currency={trip.currency}
+                onDelete={() => handleDeleteExpense(item.id)}
+              />
+            </View>
+          ))
+        )}
+
+        {/* Settlements */}
+        {settlements.length > 0 && (
+          <TouchableOpacity
+            style={styles.settleBtn}
+            onPress={() => router.push(`/settle/${trip.id}`)}
+          >
+            <Ionicons name="cash-outline" size={18} color="#000000" />
+            <Text style={styles.settleBtnText}>SETTLE UP ({settlements.length} payments)</Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={{ height: 120 }} />
+      </ScrollView>
+
+      {/* P2P Sync Modal */}
+      {trip && (
+        <P2PSyncModal
+          visible={showSyncModal}
+          trip={trip}
+          onClose={() => setShowSyncModal(false)}
+        />
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  loading: {
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: SPACING.xxxl,
-  },
+  container: { flex: 1, backgroundColor: '#000000' },
+  loading: { color: '#555555', textAlign: 'center', marginTop: 64, fontFamily: 'monospace' },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.lg,
-    paddingBottom: SPACING.md,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#222222',
   },
-  tripName: {
-    fontSize: FONT_SIZE.xxl,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  tripMeta: {
-    fontSize: FONT_SIZE.sm,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
-  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  backBtn: { padding: 4 },
+  backText: { fontFamily: 'monospace', fontSize: 12, color: '#00FF66', letterSpacing: 1 },
+  tripName: { fontFamily: 'monospace', fontSize: 16, color: '#E0E0E0', fontWeight: '700' },
+  tripMeta: { fontFamily: 'monospace', fontSize: 10, color: '#555555', marginTop: 2 },
+  headerActions: { flexDirection: 'row', gap: 6 },
   headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    width: 32, height: 32, borderRadius: 16, backgroundColor: '#1F1F1F',
+    borderWidth: 1, borderColor: '#333333', justifyContent: 'center', alignItems: 'center',
   },
-  section: {
-    paddingHorizontal: SPACING.lg,
-    marginBottom: SPACING.md,
+  scrollContent: { paddingBottom: 20 },
+  poolSection: {
+    margin: 16, backgroundColor: '#0A0A0A', borderRadius: 4, padding: 12,
+    borderWidth: 1, borderColor: '#222222',
   },
+  poolHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  poolLabel: { fontFamily: 'monospace', fontSize: 11, color: '#FFB000', fontWeight: '700', letterSpacing: 1 },
+  poolAmount: { fontFamily: 'monospace', fontSize: 14, color: '#00FF66', fontWeight: '700' },
+  poolBarBg: { height: 6, backgroundColor: '#1F1F1F', borderRadius: 3, overflow: 'hidden' },
+  poolBarFill: { height: 6, backgroundColor: '#00FF66', borderRadius: 3 },
+  poolMeta: { fontFamily: 'monospace', fontSize: 9, color: '#555555', marginTop: 6 },
+  poolDepositBtnMain: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16,
+    backgroundColor: '#1F1F1F', borderRadius: 4, paddingVertical: 10, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: '#333333',
+  },
+  poolDepositBtnMainText: { fontFamily: 'monospace', fontSize: 11, color: '#FFB000', fontWeight: '700' },
+  poolDepositForm: {
+    margin: 16, backgroundColor: '#0A0A0A', borderRadius: 4, padding: 12,
+    borderWidth: 1, borderColor: '#FFB000',
+  },
+  poolDepositLabel: { fontFamily: 'monospace', fontSize: 10, color: '#FFB000', letterSpacing: 1, marginBottom: 6 },
+  poolDepositRow: { flexDirection: 'row', gap: 6 },
+  poolDepositInput: {
+    flex: 1, fontFamily: 'monospace', fontSize: 14, color: '#E0E0E0',
+    backgroundColor: '#1F1F1F', borderRadius: 4, borderWidth: 1, borderColor: '#333333', padding: 8,
+  },
+  poolDepositBtn: { backgroundColor: '#FFB000', borderRadius: 4, paddingHorizontal: 12, justifyContent: 'center' },
+  poolDepositBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#000000', fontWeight: '700' },
+  poolCancelBtn: { backgroundColor: '#333333', borderRadius: 4, paddingHorizontal: 10, justifyContent: 'center' },
+  poolCancelBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#888888', fontWeight: '700' },
+  section: { paddingHorizontal: 16, marginBottom: 8 },
   sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 10,
   },
-  sectionTitle: {
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  memberInput: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
-    marginTop: SPACING.sm,
-  },
+  sectionTitle: { fontFamily: 'monospace', fontSize: 11, color: '#888888', letterSpacing: 1, fontWeight: '700' },
+  memberInput: { flexDirection: 'row', gap: 6, marginBottom: 8 },
   input: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    color: COLORS.text,
-    fontSize: FONT_SIZE.md,
+    flex: 1, fontFamily: 'monospace', fontSize: 13, color: '#E0E0E0',
+    backgroundColor: '#1F1F1F', borderRadius: 4, borderWidth: 1, borderColor: '#333333', padding: 8,
   },
-  addBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.md,
-    paddingHorizontal: SPACING.lg,
-    justifyContent: 'center',
-  },
-  addBtnText: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  memberScroll: {
-    flexDirection: 'row',
-  },
+  addBtn: { backgroundColor: '#00FF66', borderRadius: 4, paddingHorizontal: 12, justifyContent: 'center' },
+  addBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#000000', fontWeight: '700' },
+  memberList: { gap: 6 },
   memberChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    marginRight: SPACING.sm,
-    gap: SPACING.xs,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#0A0A0A', borderRadius: 4, padding: 10,
+    borderWidth: 1, borderColor: '#222222',
   },
   memberAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 32, height: 32, borderRadius: 16, backgroundColor: '#1F1F1F',
+    borderWidth: 1, borderColor: '#333333', justifyContent: 'center', alignItems: 'center',
   },
-  memberAvatarText: {
-    color: COLORS.white,
-    fontSize: FONT_SIZE.xs,
-    fontWeight: '700',
-  },
-  memberName: {
-    color: COLORS.text,
-    fontSize: FONT_SIZE.sm,
-  },
+  memberAvatarText: { fontFamily: 'monospace', fontSize: 13, color: '#00FF66', fontWeight: '700' },
+  memberInfo: { flex: 1 },
+  memberName: { fontFamily: 'monospace', fontSize: 13, color: '#E0E0E0', fontWeight: '600' },
+  memberUPI: { fontFamily: 'monospace', fontSize: 10, color: '#555555', marginTop: 2 },
   addExpenseBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.md,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#00FF66', borderRadius: 4, paddingHorizontal: 10, paddingVertical: 5,
   },
-  addExpenseBtnText: {
-    color: COLORS.white,
-    fontSize: FONT_SIZE.sm,
-    fontWeight: '600',
-  },
-  list: {
-    paddingBottom: 100,
-  },
+  addExpenseBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#000000', fontWeight: '700' },
   settleBtn: {
-    position: 'absolute',
-    bottom: SPACING.xl,
-    left: SPACING.lg,
-    right: SPACING.lg,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    backgroundColor: COLORS.accent,
-    borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.lg,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+    margin: 16, backgroundColor: '#FFB000', borderRadius: 6, paddingVertical: 14,
   },
-  settleBtnText: {
-    color: COLORS.white,
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '700',
-  },
+  settleBtnText: { fontFamily: 'monospace', fontSize: 13, color: '#000000', fontWeight: '700', letterSpacing: 1 },
 });

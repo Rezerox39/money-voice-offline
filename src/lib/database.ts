@@ -77,6 +77,17 @@ export async function initDatabase(): Promise<void> {
       note TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ledger_events (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      op TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      synced INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   // ── Cold-boot integrity check ─────────────────────────────────
@@ -670,6 +681,58 @@ export async function seedPlayground(): Promise<void> {
     color: '#00FF66',
   };
   await saveGoal(goal);
+}
+
+
+// ── Ledger Events (P2P Sync Queue) ─────────────────────────────
+
+export async function appendLedgerEvent(
+  tripId: string,
+  entityType: string,
+  entityId: string,
+  op: string,
+  payload: unknown
+): Promise<void> {
+  const database = await getDb();
+  await database.runAsync(
+    'INSERT OR REPLACE INTO ledger_events (id, trip_id, entity_type, entity_id, op, payload, created_at, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [generateUUID(), tripId, entityType, entityId, op, JSON.stringify(payload), Date.now(), 0]
+  );
+}
+
+export async function getUnsyncedLedgerEvents(tripId: string): Promise<any[]> {
+  const database = await getDb();
+  return database.getAllAsync(
+    'SELECT * FROM ledger_events WHERE trip_id = ? AND synced = 0 ORDER BY created_at',
+    [tripId]
+  );
+}
+
+export async function markLedgerEventsSynced(eventIds: string[]): Promise<void> {
+  const database = await getDb();
+  for (const id of eventIds) {
+    await database.runAsync('UPDATE ledger_events SET synced = 1 WHERE id = ?', [id]);
+  }
+}
+
+// ── Sync Payload Builder ────────────────────────────────────────
+
+export async function buildSyncPayload(trip: Trip): Promise<string> {
+  const database = await getDb();
+  const events = await getUnsyncedLedgerEvents(trip.id);
+  const poolDeps = await getPoolDepositsByTripId(trip.id);
+
+  return JSON.stringify({
+    id: trip.id,
+    name: trip.name,
+    currency: trip.currency,
+    createdAt: trip.createdAt,
+    updatedAt: trip.updatedAt,
+    members: trip.members,
+    expenses: trip.expenses,
+    poolDeposits: poolDeps,
+    ledgerEvents: events,
+  });
 }
 
 // ── Emergency Reset (Panic Wipe) ───────────────────────────────────
