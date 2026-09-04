@@ -8,10 +8,10 @@ import { LedgerProvider } from '../src/context/LedgerContext';
 import { isOnboardingComplete, hasPinLock } from '../src/lib/profile';
 import { View, ActivityIndicator } from 'react-native';
 
-const DB_NAME = 'moneyvoice.db';
+const DB_NAME = 'moneyvoice_v2.db';
 
-async function onDatabaseInit(db: any) {
-  await initDatabase();
+async function onDatabaseInit(database: any) {
+  await initDatabase(database);
 }
 
 function RootNavigationGate() {

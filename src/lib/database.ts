@@ -5,15 +5,14 @@ import { generateUUID } from './uuid';
 
 let db: SQLite.SQLiteDatabase;
 
-export class DatabaseCorruptionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DatabaseCorruptionError';
+export async function initDatabase(database?: SQLite.SQLiteDatabase): Promise<void> {
+  // If SQLiteProvider passes its db instance, use it directly.
+  // Otherwise (standalone calls), open our own connection.
+  if (database) {
+    db = database;
+  } else if (!db) {
+    db = await SQLite.openDatabaseAsync('moneyvoice_v2.db');
   }
-}
-
-export async function initDatabase(): Promise<void> {
-  db = await SQLite.openDatabaseAsync('moneyvoice.db');
 
   // ── Pragmas for crash resilience ──────────────────────────────
   await db.execAsync(`
@@ -21,7 +20,10 @@ export async function initDatabase(): Promise<void> {
     PRAGMA synchronous = NORMAL;
     PRAGMA foreign_keys = ON;
     PRAGMA busy_timeout = 5000;
+  `);
 
+  // ── Schema migration (discrete execAsync, safe to re-run) ────
+  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS trips (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -90,27 +92,9 @@ export async function initDatabase(): Promise<void> {
     );
   `);
 
-  // ── Cold-boot integrity check ─────────────────────────────────
-  try {
-    const result = await db.getFirstAsync<{ integrity_check: string }>(
-      'PRAGMA quick_check'
-    );
-    if (result?.integrity_check !== 'ok') {
-      throw new DatabaseCorruptionError(
-        'Database integrity check failed: ' + (result?.integrity_check ?? 'unknown')
-      );
-    }
-  } catch (err) {
-    if (err instanceof DatabaseCorruptionError) throw err;
-    // quick_check unavailable or other error — proceed with caution
-  }
-
   // ── Deterministic seed on fresh install ───────────────────────
   await seedIfEmpty(db);
 }
-
-const SEED_CATEGORIES = ['Food', 'Transport', 'Accommodation', 'Shopping', 'Entertainment', 'Utilities', 'Other'];
-
 async function seedIfEmpty(database: SQLite.SQLiteDatabase): Promise<void> {
   const tripCount = await database.getFirstAsync<{ cnt: number }>(
     'SELECT COUNT(*) as cnt FROM trips'
