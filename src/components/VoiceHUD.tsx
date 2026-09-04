@@ -168,8 +168,8 @@ export function VoiceHUD({ state, onCancel, onConfirm, onEdit }: VoiceHUDProps) 
 
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    bottom: 90,
+    position: 'relative',
+    marginTop: 0,
     left: 12,
     right: 12,
     backgroundColor: '#0A0E1A',

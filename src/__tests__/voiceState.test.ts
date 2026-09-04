@@ -1,16 +1,9 @@
-// ─────────────────────────────────────────────────────────────────
-// voiceState.test.ts — Tests for useVoiceExpense hook
-// Verifies timer cancellation, immediate commit, and DB writes.
-// ─────────────────────────────────────────────────────────────────
-
 import { renderHook, act } from '@testing-library/react-hooks';
 import { useVoiceExpense } from '../hooks/useVoiceExpense';
 import * as offlineSpeech from '../lib/offlineSpeech';
 import * as database from '../lib/database';
 import * as audioFeedback from '../lib/audioFeedback';
 import type { Trip } from '../types';
-
-// ── Mocks ──────────────────────────────────────────────────────────
 
 jest.mock('../lib/offlineSpeech', () => ({
   startOfflineRecognition: jest.fn(),
@@ -19,6 +12,7 @@ jest.mock('../lib/offlineSpeech', () => ({
 
 jest.mock('../lib/database', () => ({
   addExpense: jest.fn(),
+  addPersonalExpense: jest.fn(),
   addPoolDeposit: jest.fn(),
   appendLedgerEvent: jest.fn(),
 }));
@@ -40,6 +34,7 @@ jest.mock('../lib/uuid', () => ({
 
 const mockStartRecognition = offlineSpeech.startOfflineRecognition as jest.Mock;
 const mockAddExpense = database.addExpense as jest.Mock;
+const mockAddPersonalExpense = database.addPersonalExpense as jest.Mock;
 const mockAddPoolDeposit = database.addPoolDeposit as jest.Mock;
 const mockAudioSuccess = audioFeedback.audioParseSuccess as jest.Mock;
 const mockAudioError = audioFeedback.audioParseError as jest.Mock;
@@ -58,8 +53,6 @@ const mockTrip: Trip = {
   expenses: [],
 };
 
-// ── Tests ──────────────────────────────────────────────────────────
-
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useFakeTimers();
@@ -70,7 +63,7 @@ afterEach(() => {
 });
 
 describe('auto-commit', () => {
-  it('commits expense after 2-second countdown', async () => {
+  it('commits trip expense after 2-second countdown', async () => {
     mockStartRecognition.mockResolvedValue({
       transcript: 'dinner 1200 split with all',
       confidence: 0.9,
@@ -84,16 +77,13 @@ describe('auto-commit', () => {
       await result.current.startRecording();
     });
 
-    // Should be in parsed state
     expect(result.current.state.stage).toBe('parsed');
     expect(result.current.state.countdown).toBeGreaterThan(0);
 
-    // Advance timer past 2 seconds
     await act(async () => {
       jest.advanceTimersByTime(2100);
     });
 
-    // Should have committed
     expect(mockAddExpense).toHaveBeenCalledTimes(1);
     expect(mockAudioSuccess).toHaveBeenCalled();
     expect(result.current.state.stage).toBe('idle');
@@ -113,7 +103,6 @@ describe('auto-commit', () => {
       await result.current.startRecording();
     });
 
-    // Cancel before countdown finishes
     await act(async () => {
       result.current.cancelCommit();
     });
@@ -121,7 +110,6 @@ describe('auto-commit', () => {
     expect(result.current.state.stage).toBe('idle');
     expect(result.current.state.countdown).toBe(0);
 
-    // Advance timer — should NOT commit
     await act(async () => {
       jest.advanceTimersByTime(3000);
     });
@@ -131,7 +119,7 @@ describe('auto-commit', () => {
 
   it('commits immediately when confirmImmediately is called', async () => {
     mockStartRecognition.mockResolvedValue({
-      transcript: 'petrol 850',
+      transcript: 'petrol 850 split with Rahul',
       confidence: 0.91,
     });
 
@@ -162,7 +150,6 @@ describe('auto-commit', () => {
       await result.current.startRecording();
     });
 
-    // Advance timer
     await act(async () => {
       jest.advanceTimersByTime(2100);
     });
@@ -175,9 +162,30 @@ describe('auto-commit', () => {
     );
     expect(mockAddExpense).not.toHaveBeenCalled();
   });
-});
 
-// ── Test: Error handling ───────────────────────────────────────────
+  it('saves personal expense without requiring a trip', async () => {
+    mockStartRecognition.mockResolvedValue({
+      transcript: 'chai 30 personal',
+      confidence: 0.88,
+    });
+
+    const { result } = renderHook(() =>
+      useVoiceExpense(null, jest.fn())
+    );
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(2100);
+    });
+
+    expect(mockAddPersonalExpense).toHaveBeenCalledTimes(1);
+    expect(mockAddExpense).not.toHaveBeenCalled();
+    expect(result.current.state.stage).toBe('idle');
+  });
+});
 
 describe('error handling', () => {
   it('surfaces no-speech error', async () => {

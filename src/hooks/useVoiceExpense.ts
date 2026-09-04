@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { startOfflineRecognition, stopRecognition } from '../lib/offlineSpeech';
 import { parseVoiceInput, type ParseResult } from '../lib/voiceParser';
-import { addExpense, addPoolDeposit, appendLedgerEvent } from '../lib/database';
+import { addExpense, addPersonalExpense, addPoolDeposit, appendLedgerEvent } from '../lib/database';
 import { computeEqualSplit } from '../lib/debt';
 import { audioParseSuccess, audioParseError } from '../lib/audioFeedback';
 import type { Trip } from '../types';
@@ -72,11 +72,26 @@ export function useVoiceExpense(currentTrip: Trip | null, onCommitSuccess: () =>
 
   const executeCommit = useCallback(async (result: ParseResult | null, transcript: string) => {
     if (!result) return;
-    const trip = tripRef.current;
-    if (!trip) { setState((p) => ({ ...p, stage: 'error', error: 'No active trip.', countdown: 0 })); return; }
     setState((p) => ({ ...p, stage: 'committing' }));
+
     try {
       if (result.type === 'expense') {
+        // ── PERSONAL EXPENSE: save directly, no trip needed ──
+        if (result.isPersonal) {
+          await addPersonalExpense(result.title, result.amount, result.category || 'Other');
+          await audioParseSuccess();
+          onCommitSuccess();
+          resetState();
+          return;
+        }
+
+        // ── TRIP EXPENSE: requires active trip ──
+        const trip = tripRef.current;
+        if (!trip) {
+          setState((p) => ({ ...p, stage: 'error', error: 'No active trip. Switch to /PERSONAL or select a trip.', countdown: 0 }));
+          return;
+        }
+
         let payerId: string;
         if (!result.payer || result.payer.toLowerCase() === 'me' || result.payer.toLowerCase() === 'i') {
           payerId = trip.members[0]?.id ?? '__SELF__';
@@ -84,10 +99,9 @@ export function useVoiceExpense(currentTrip: Trip | null, onCommitSuccess: () =>
           const member = trip.members.find((m) => m.name.toLowerCase().startsWith(result.payer!.toLowerCase()));
           payerId = member?.id ?? trip.members[0]?.id ?? '__SELF__';
         }
+
         let splitBetween: { memberId: string; amount: number }[];
-        if (result.isPersonal) {
-          splitBetween = [{ memberId: payerId, amount: result.amount }];
-        } else if (result.splitMode === 'exact' && Object.keys(result.exactSplits).length > 0) {
+        if (result.splitMode === 'exact' && Object.keys(result.exactSplits).length > 0) {
           splitBetween = Object.entries(result.exactSplits).map(([name, amount]) => {
             const member = trip.members.find((m) => m.name.toLowerCase().startsWith(name.toLowerCase()));
             return { memberId: member?.id ?? name, amount };
@@ -98,9 +112,15 @@ export function useVoiceExpense(currentTrip: Trip | null, onCommitSuccess: () =>
         } else {
           splitBetween = computeEqualSplit(result.amount, trip.members.map((m) => m.id));
         }
+
         await addExpense(trip.id, result.title, result.amount, payerId, splitBetween, result.category || 'Other');
         await appendLedgerEvent(trip.id, 'expense', generateUUID(), 'add', { title: result.title, amount: result.amount, paidBy: payerId, category: result.category, splitBetween });
       } else if (result.type === 'pool' && result.intent === 'POOL_DEPOSIT') {
+        const trip = tripRef.current;
+        if (!trip) {
+          setState((p) => ({ ...p, stage: 'error', error: 'No active trip for pool deposit.', countdown: 0 }));
+          return;
+        }
         const payerId = result.payerId || trip.members[0]?.id || '__SELF__';
         await addPoolDeposit(trip.id, payerId, result.amount);
         await appendLedgerEvent(trip.id, 'pool_deposit', generateUUID(), 'add', { amount: result.amount, payerId });
