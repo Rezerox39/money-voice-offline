@@ -1,53 +1,39 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { ActiveMode } from '../context/LedgerContext';
 
 interface DockProps {
   mode: ActiveMode;
-  onModeSwitch: () => void;
-  onVoicePress: () => void;
-  isRecording: boolean;
+  activeTripId: string | null;
+  onSettle: () => void;
+  onQR: () => void;
 }
 
-export function Dock({ mode, onModeSwitch, onVoicePress, isRecording }: DockProps) {
+export function Dock({ mode, activeTripId, onSettle, onQR }: DockProps) {
   const router = useRouter();
+
+  const items = [
+    { icon: 'stats-chart-outline' as const, label: 'STATS', onPress: () => router.push('/stats') },
+    { icon: 'wallet-outline' as const, label: 'BUDGET', onPress: () => router.push('/budget') },
+    { icon: 'flag-outline' as const, label: 'GOALS', onPress: () => router.push('/goals') },
+    { icon: 'repeat-outline' as const, label: 'RECUR', onPress: () => router.push('/recurring') },
+    { icon: 'search-outline' as const, label: 'SEARCH', onPress: () => router.push('/search') },
+    { icon: 'notifications-outline' as const, label: 'ALERT', onPress: () => router.push('/reminders') },
+    { icon: 'person-outline' as const, label: 'USER', onPress: () => router.push('/profile') },
+    { icon: 'settings-outline' as const, label: 'CONFIG', onPress: () => router.push('/settings') },
+  ];
 
   return (
     <View style={styles.container}>
-      {/* Top row: Feature nav */}
-      <View style={styles.topRow}>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/stats')}>
-          <Text style={styles.navBtnText}>[📊 STATS]</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/budget')}>
-          <Text style={styles.navBtnText}>[🎯 BUDGET]</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/search')}>
-          <Text style={styles.navBtnText}>[🔍 FIND]</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/recurring')}>
-          <Text style={styles.navBtnText}>[🔄 REPEAT]</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Bottom row: Core nav */}
-      <View style={styles.bottomRow}>
-        <TouchableOpacity style={styles.navBtn} onPress={onModeSwitch}>
-          <Text style={styles.navBtnText}>
-            {mode === 'PERSONAL' ? '[/personal]' : '[/trips]'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.voiceBtn} onPress={onVoicePress}>
-          <Text style={[styles.voiceBtnText, isRecording && styles.voiceBtnActive]}>
-            {isRecording ? '( ( ( ● REC ) ) )' : '( ( ( ○ ) ) )'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/settings')}>
-          <Text style={styles.navBtnText}>[⚙ SET]</Text>
-        </TouchableOpacity>
+      <View style={styles.row}>
+        {items.map((item, i) => (
+          <TouchableOpacity key={i} style={styles.item} onPress={item.onPress}>
+            <Ionicons name={item.icon} size={16} color="#888888" />
+            <Text style={styles.label}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
     </View>
   );
@@ -56,46 +42,24 @@ export function Dock({ mode, onModeSwitch, onVoicePress, isRecording }: DockProp
 const styles = StyleSheet.create({
   container: {
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: '#222222',
     backgroundColor: '#0A0A0A',
     paddingBottom: Platform.OS === 'android' ? 12 : 8,
   },
-  topRow: {
+  row: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingHorizontal: 8,
     paddingTop: 8,
-    paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1A1A1A',
+    paddingHorizontal: 4,
   },
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  item: {
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    gap: 2,
   },
-  navBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  navBtnText: {
+  label: {
     fontFamily: 'monospace',
-    fontSize: 10,
-    color: '#888',
+    fontSize: 8,
+    color: '#888888',
     letterSpacing: 0.5,
-  },
-  voiceBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  voiceBtnText: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#888',
-  },
-  voiceBtnActive: {
-    color: '#FF3333',
   },
 });

@@ -3,27 +3,24 @@
 // BitChat AMOLED monospace interface.
 // ─────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-  Platform,
+  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  Platform, RefreshControl,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useLedger, ActiveMode } from '../src/context/LedgerContext';
+import { useLedger } from '../src/context/LedgerContext';
 import { useVoiceExpense } from '../src/hooks/useVoiceExpense';
 import { VoiceHUD } from '../src/components/VoiceHUD';
 import { EmptyState } from '../src/components/EmptyState';
 import { Dock } from '../src/components/Dock';
 import { ExpenseRow } from '../src/components/ExpenseRow';
-import { addPersonalExpense } from '../src/lib/database';
+import { ExpenseRowSkeleton } from '../src/components/LoadingSkeleton';
+import { recordActivity, getStreakData, formatStreak, StreakData } from '../src/lib/streak';
 import { computePoolTelemetry } from '../src/lib/debt';
-import { CURRENCIES, TripExpense, PersonalExpense } from '../src/types';
-import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../src/constants';
+import { CURRENCIES, PersonalExpense } from '../src/types';
+import { COLORS, SPACING } from '../src/constants';
 
 // ── ASCII Burn-Down Bar ────────────────────────────────────────────
 
@@ -36,17 +33,17 @@ function BurnBar({ remaining, total }: { remaining: number; total: number }) {
 
 // ── Status Bar ─────────────────────────────────────────────────────
 
-function StatusBar() {
+function StatusBar({ streak }: { streak?: StreakData }) {
   return (
     <View style={styles.statusBar}>
       <Text style={styles.statusDot}>●</Text>
       <Text style={styles.statusText}>OFFLINE MESH</Text>
+      {streak && streak.currentStreak > 0 && (
+        <Text style={styles.streakBadge}>{streak.currentStreak}🔥</Text>
+      )}
     </View>
   );
 }
-
-// ── Dock ───────────────────────────────────────────────────────────
-
 
 // ── Main Screen ────────────────────────────────────────────────────
 
@@ -62,8 +59,25 @@ export default function ChannelScreen() {
     refreshActiveData,
   } = useLedger();
 
-  const handleCommit = useCallback(() => {
-    refreshActiveData();
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [streak, setStreak] = useState<StreakData | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setIsLoading(true);
+      await refreshActiveData();
+      const s = await getStreakData();
+      setStreak(s);
+      setIsLoading(false);
+    })();
+  }, []);
+
+  const handleCommit = useCallback(async () => {
+    await refreshActiveData();
+    await recordActivity();
+    const s = await getStreakData();
+    setStreak(s);
   }, [refreshActiveData]);
 
   const voice = useVoiceExpense(activeTrip, handleCommit);
@@ -71,20 +85,24 @@ export default function ChannelScreen() {
   const voiceState = voice.state;
   const isRecording = voiceState.stage === 'listening' || voiceState.isRecording;
 
+  async function onRefresh() {
+    setRefreshing(true);
+    await refreshActiveData();
+    const s = await getStreakData();
+    setStreak(s);
+    setRefreshing(false);
+  }
+
   function handleModeSwitch() {
     setMode(mode === 'PERSONAL' ? 'TRIP' : 'PERSONAL');
   }
 
   function handleSettle() {
-    if (activeTripId) {
-      router.push(`/settle/${activeTripId}`);
-    }
+    if (activeTripId) router.push(`/settle/${activeTripId}`);
   }
 
   function handleQR() {
-    if (activeTripId) {
-      router.push(`/trips/share-qr/${activeTripId}`);
-    }
+    if (activeTripId) router.push(`/trips/share-qr/${activeTripId}`);
   }
 
   function handleVoicePress() {
@@ -129,64 +147,70 @@ export default function ChannelScreen() {
               total={poolTelemetry.totalDeposited}
             />
             <Text style={styles.poolMeta}>
-              {poolTelemetry.burnRatePercent.toFixed(0)}% spent · {poolTelemetry.totalDeposited.toLocaleString('en-IN')} deposited
+              SPENT: {currency.symbol}{poolTelemetry.totalSpentFromPool.toLocaleString('en-IN')} · BURN: {poolTelemetry.burnRatePercent.toFixed(0)}%
             </Text>
           </View>
         )}
 
         {/* Trip Header */}
         <View style={styles.tripHeader}>
-          <Text style={styles.tripChannel}>
-            #{activeTrip.name.toLowerCase().replace(/\s+/g, '-')}
-          </Text>
+          <Text style={styles.tripChannel}>#{activeTrip.name.toLowerCase().replace(/\s+/g, '-')}</Text>
           <Text style={styles.tripMeta}>
-            {activeTrip.members.length} members · {currency.symbol}{totalExpenses.toLocaleString('en-IN')} total
+            {activeTrip.members.length} MEMBERS · {activeTrip.expenses.length} TXNS · TOTAL: {currency.symbol}{totalExpenses.toLocaleString('en-IN')}
           </Text>
         </View>
 
-        {/* Expense Timeline */}
-        {activeTrip.expenses.length === 0 ? (
-          <EmptyState
-            icon="receipt-outline"
-            title="No expenses yet"
-            subtitle='Say "Dinner 1200 split with all"'
-          />
-        ) : (
-          <FlatList
-            data={activeTrip.expenses}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <ExpenseRow
-                expense={item}
-                members={activeTrip.members}
-                currency={activeTrip.currency}
-              />
-            )}
-            contentContainerStyle={styles.list}
-          />
-        )}
+        {/* Expenses */}
+        <FlatList
+          data={activeTrip.expenses.slice().reverse()}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => {
+            const payerName = activeTrip.members.find(m => m.id === item.paidBy)?.name || 'Unknown';
+            const isPool = item.paidBy === 'POOL';
+            return (
+              <View style={styles.expenseRow}>
+                <View style={styles.expenseInfo}>
+                  <Text style={styles.expenseTitle}>
+                    {isPool ? '[POOL] ' : ''}{item.title}
+                  </Text>
+                  <Text style={styles.expenseMeta}>
+                    {payerName} · {item.category}
+                  </Text>
+                </View>
+                <Text style={styles.expenseAmount}>
+                  {currency.symbol}{item.amount.toLocaleString('en-IN')}
+                </Text>
+              </View>
+            );
+          }}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#00FF66"
+              colors={['#00FF66']}
+            />
+          }
+        />
       </View>
     );
   }
 
-  // ── Personal Mode ─────────────────────────────────────────────
+  // ── Personal Mode ──────────────────────────────────────────────
 
   function renderPersonalMode() {
-    const todayTotal = personalExpenses
-      .filter((e) => {
-        const d = new Date(e.createdAt);
-        const now = new Date();
-        return d.toDateString() === now.toDateString();
-      })
-      .reduce((s, e) => s + e.amount, 0);
+    const now = Date.now();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayExpenses = personalExpenses.filter(e => e.createdAt >= todayStart.getTime());
+    const todayTotal = todayExpenses.reduce((s, e) => s + e.amount, 0);
 
-    const monthTotal = personalExpenses
-      .filter((e) => {
-        const d = new Date(e.createdAt);
-        const now = new Date();
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      })
-      .reduce((s, e) => s + e.amount, 0);
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const monthExpenses = personalExpenses.filter(e => e.createdAt >= monthStart.getTime());
+    const monthTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
 
     return (
       <View style={styles.modeContainer}>
@@ -203,46 +227,55 @@ export default function ChannelScreen() {
           </View>
         </View>
 
-        {/* Personal Expense Log */}
-        {personalExpenses.length === 0 ? (
-          <EmptyState
-            icon="person-outline"
-            title="No personal expenses"
-            subtitle='Say "Chai 30" or "Petrol 500 card"'
-          />
-        ) : (
-          <FlatList
-            data={personalExpenses}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.personalRow}>
-                <View style={styles.personalInfo}>
-                  <Text style={styles.personalTitle}>{item.title}</Text>
-                  <Text style={styles.personalMeta}>
-                    {item.category} · {new Date(item.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </View>
-                <Text style={styles.personalAmount}>₹{item.amount.toLocaleString('en-IN')}</Text>
+        {/* Expenses */}
+        <FlatList
+          data={personalExpenses.slice().reverse()}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <View style={styles.personalRow}>
+              <View style={styles.personalInfo}>
+                <Text style={styles.personalTitle}>{item.title}</Text>
+                <Text style={styles.personalMeta}>
+                  {item.category} · {new Date(item.createdAt).toLocaleDateString('en-IN')}
+                </Text>
               </View>
-            )}
-            contentContainerStyle={styles.list}
-          />
-        )}
+              <Text style={styles.personalAmount}>₹{item.amount.toLocaleString('en-IN')}</Text>
+            </View>
+          )}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            <EmptyState
+              icon="receipt-outline"
+              title="No expenses yet"
+              subtitle='Say "Chai 30 personal" to start tracking'
+            />
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#00FF66"
+              colors={['#00FF66']}
+            />
+          }
+        />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Top Status Bar */}
-      <StatusBar />
+      <StatusBar streak={streak ?? undefined} />
 
-      {/* Mode Indicator */}
+      {/* Mode Bar */}
       <View style={styles.modeBar}>
-        <Text style={styles.modeText}>
-          MODE: {mode === 'PERSONAL' ? '/PERSONAL' : `#${activeTrip?.name?.toLowerCase().replace(/\s+/g, '-') || 'NO-TRIP'}`}
-        </Text>
-        {mode === 'TRIP' && (
+        <TouchableOpacity onPress={handleModeSwitch} style={styles.modeSwitch}>
+          <Text style={styles.modeText}>
+            MODE: {mode === 'PERSONAL' ? '/PERSONAL' : `#${activeTrip?.name.toLowerCase().replace(/\s+/g, '-') || 'trip'}`}
+          </Text>
+          <Ionicons name="swap-horizontal" size={14} color="#FFB000" />
+        </TouchableOpacity>
+        {mode === 'TRIP' && activeTripId && (
           <TouchableOpacity onPress={handleQR}>
             <Text style={styles.qrBadge}>[QR]</Text>
           </TouchableOpacity>
@@ -250,40 +283,43 @@ export default function ChannelScreen() {
       </View>
 
       {/* Content */}
-      <View style={styles.content}>
-        {mode === 'PERSONAL' ? renderPersonalMode() : renderTripMode()}
-      </View>
+      {isLoading ? (
+        <View style={{ flex: 1 }}>
+          {[1, 2, 3, 4, 5].map(i => <ExpenseRowSkeleton key={i} />)}
+        </View>
+      ) : (
+        <View style={styles.content}>
+          {mode === 'TRIP' ? renderTripMode() : renderPersonalMode()}
+        </View>
+      )}
 
-      {/* Voice HUD Overlay */}
-      <VoiceHUD
-        state={voiceState}
-        onCancel={voice.cancelCommit}
-        onConfirm={voice.confirmImmediately}
-        onEdit={voice.cancelCommit}
-      />
-
-      {/* Bottom Dock */}
-      <Dock
-        mode={mode}
-        onModeSwitch={handleModeSwitch}
-        onVoicePress={handleVoicePress}
-        isRecording={isRecording}
-      />
-
-      {/* Voice FAB (centered in dock area) */}
-      <TouchableOpacity
-        style={styles.voiceFab}
-        onPress={handleVoicePress}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.fabInner, isRecording && styles.fabActive]}>
+      {/* Voice FAB */}
+      <View style={styles.voiceFab}>
+        <TouchableOpacity
+          style={[styles.fabInner, isRecording && styles.fabActive]}
+          onPress={handleVoicePress}
+          activeOpacity={0.7}
+        >
           <Ionicons
             name={isRecording ? 'mic' : 'mic-outline'}
-            size={28}
+            size={24}
             color={isRecording ? '#000000' : '#00FF66'}
           />
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+
+      {/* Voice HUD */}
+      {(voiceState.stage === 'parsed' || voiceState.stage === 'committing') && (
+        <VoiceHUD state={voiceState} onCancel={voice.cancelCommit} onConfirm={voice.confirmImmediately} onEdit={() => {}} />
+      )}
+
+      {/* Dock */}
+      <Dock
+        mode={mode}
+        activeTripId={activeTripId}
+        onSettle={handleSettle}
+        onQR={handleQR}
+      />
     </View>
   );
 }
@@ -295,7 +331,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  // Status Bar
   statusBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -314,7 +349,12 @@ const styles = StyleSheet.create({
     color: '#00FF66',
     letterSpacing: 1,
   },
-  // Mode Bar
+  streakBadge: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#FFB000',
+    marginLeft: 'auto',
+  },
   modeBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -323,6 +363,11 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.md,
     borderBottomWidth: 1,
     borderBottomColor: '#222222',
+  },
+  modeSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   modeText: {
     fontFamily: 'monospace',
@@ -336,14 +381,12 @@ const styles = StyleSheet.create({
     color: '#00FF66',
     fontWeight: '700',
   },
-  // Content
   content: {
     flex: 1,
   },
   modeContainer: {
     flex: 1,
   },
-  // Pool Section
   poolSection: {
     backgroundColor: '#0A0A0A',
     margin: SPACING.lg,
@@ -383,7 +426,6 @@ const styles = StyleSheet.create({
     color: '#555555',
     marginTop: SPACING.xs,
   },
-  // Trip Header
   tripHeader: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
@@ -402,7 +444,6 @@ const styles = StyleSheet.create({
     color: '#555555',
     marginTop: 2,
   },
-  // Burn Summary (Personal)
   burnSummary: {
     flexDirection: 'row',
     margin: SPACING.lg,
@@ -439,7 +480,32 @@ const styles = StyleSheet.create({
     color: '#FFB000',
     fontWeight: '700',
   },
-  // Personal Rows
+  expenseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
+  },
+  expenseInfo: { flex: 1, gap: 2 },
+  expenseTitle: {
+    fontFamily: 'monospace',
+    fontSize: 13,
+    color: '#E0E0E0',
+  },
+  expenseMeta: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#555555',
+  },
+  expenseAmount: {
+    fontFamily: 'monospace',
+    fontSize: 14,
+    color: '#FFB000',
+    fontWeight: '700',
+  },
   personalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -449,10 +515,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1A1A1A',
   },
-  personalInfo: {
-    flex: 1,
-    gap: 2,
-  },
+  personalInfo: { flex: 1, gap: 2 },
   personalTitle: {
     fontFamily: 'monospace',
     fontSize: 13,
@@ -469,40 +532,9 @@ const styles = StyleSheet.create({
     color: '#FFB000',
     fontWeight: '700',
   },
-  // List
   list: {
     paddingBottom: 160,
   },
-  // Dock
-  dock: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    paddingBottom: Platform.OS === 'android' ? SPACING.xl : SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: '#222222',
-    backgroundColor: '#0A0A0A',
-  },
-  dockBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  dockBtnText: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#888888',
-    letterSpacing: 0.5,
-  },
-  dockBtnCenter: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  recActive: {
-    color: '#FF3333',
-  },
-  // Voice FAB
   voiceFab: {
     position: 'absolute',
     bottom: Platform.OS === 'android' ? 56 : 48,
