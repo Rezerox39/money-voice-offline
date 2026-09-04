@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+
 import { fetchDeltaFromPeer, pushToPeer, SYNC_POLL_MS, getRegisteredPeers, registerPeerByIP } from '../lib/lanSync';
 import * as Haptics from 'expo-haptics';
 import type { SyncConfig, SyncPeer } from '../lib/lanSync';
