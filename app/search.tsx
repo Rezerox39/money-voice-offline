@@ -3,6 +3,8 @@ import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSQLiteContext } from 'expo-sqlite';
+import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { matchesFilters, SearchFilters } from '../src/lib/search';
 import { getCategoryConfig } from '../src/constants/categories';
 
@@ -16,6 +18,7 @@ interface ExpenseRow {
 }
 
 export default function SearchScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
   const [query, setQuery] = useState('');
@@ -58,6 +61,15 @@ export default function SearchScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
+      {/* Header with Stats Button */}
+      <View style={styles.headerRow}>
+        <Text style={styles.headerTitle}>[# LEDGER]</Text>
+        <TouchableOpacity style={styles.statsBtn} onPress={() => { Haptics.selectionAsync(); router.push('/stats'); }}>
+          <MaterialCommunityIcons name="chart-bar" size={14} color="#00FF66" />
+          <Text style={styles.statsBtnText}>STATS</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Search Bar */}
       <View style={styles.searchBar}>
         <MaterialCommunityIcons name="magnify" size={18} color="#666" />
@@ -157,6 +169,17 @@ const styles = StyleSheet.create({
   resultTitle: { color: '#FFF', fontFamily: 'monospace', fontSize: 13, fontWeight: '600' },
   resultMeta: { color: '#666', fontFamily: 'monospace', fontSize: 10, marginTop: 2 },
   resultAmount: { color: '#00FF66', fontFamily: 'monospace', fontSize: 13, fontWeight: '700' },
+  headerRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, marginBottom: 8,
+  },
+  headerTitle: { fontFamily: 'monospace', fontSize: 16, color: '#00FF66', fontWeight: '700', letterSpacing: 2 },
+  statsBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#0A0A0A', borderRadius: 4, paddingHorizontal: 10, paddingVertical: 6,
+    borderWidth: 1, borderColor: '#222222',
+  },
+  statsBtnText: { fontFamily: 'monospace', fontSize: 10, color: '#00FF66', fontWeight: '700', letterSpacing: 1 },
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyText: { color: '#555', fontFamily: 'monospace', fontSize: 12, marginTop: 12 },
 });

@@ -1,15 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import {
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BudgetGoal, BudgetStatus, loadBudgetGoals, saveBudgetGoal, deleteBudgetGoal, computeBudgetStatus } from '../src/lib/budget';
+import {
+  BudgetGoal, BudgetStatus, loadBudgetGoals, saveBudgetGoal,
+  deleteBudgetGoal, computeBudgetStatus,
+} from '../src/lib/budget';
 import { CATEGORY_CONFIGS, getCategoryConfig } from '../src/constants/categories';
 import { generateUUID } from '../src/lib/uuid';
 
+type BudgetTab = 'overview' | 'recurring' | 'goals';
+
 export default function BudgetScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const db = useSQLiteContext();
+  const [activeTab, setActiveTab] = useState<BudgetTab>('overview');
   const [goals, setGoals] = useState<BudgetGoal[]>([]);
   const [statuses, setStatuses] = useState<BudgetStatus[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -55,62 +67,118 @@ export default function BudgetScreen() {
     ]);
   };
 
+  function handleTabSwitch(tab: BudgetTab) {
+    Haptics.selectionAsync();
+    setActiveTab(tab);
+  }
+
   return (
-    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={[styles.content, { paddingTop: insets.top }]}>
-      <Text style={styles.header}>BUDGET GOALS</Text>
+    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={styles.content}>
+      {/* Header */}
+      <View style={styles.headerRow}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Text style={styles.backText}>{'<<'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.header}>[$ BUDGET]</Text>
+        <View style={{ width: 32 }} />
+      </View>
 
-      {statuses.length === 0 && (
-        <View style={styles.empty}>
-          <MaterialCommunityIcons name="target" size={48} color="#333" />
-          <Text style={styles.emptyText}>No budget goals set</Text>
-          <Text style={styles.emptySubtext}>Tap + to add a monthly spending limit</Text>
-        </View>
-      )}
-
-      {statuses.map(status => {
-        const cat = getCategoryConfig(status.goal.category);
-        return (
+      {/* Segmented Switch */}
+      <View style={styles.segmentBar}>
+        {([
+          { key: 'overview' as BudgetTab, label: '[ OVERVIEW ]' },
+          { key: 'recurring' as BudgetTab, label: '[ RECURRING ]' },
+          { key: 'goals' as BudgetTab, label: '[ GOALS ]' },
+        ]).map(tab => (
           <TouchableOpacity
-            key={status.goal.id}
-            style={styles.goalCard}
-            onLongPress={() => handleDelete(status.goal.id)}
+            key={tab.key}
+            style={[styles.segmentBtn, activeTab === tab.key && styles.segmentBtnActive]}
+            onPress={() => handleTabSwitch(tab.key)}
           >
-            <View style={styles.goalHeader}>
-              <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
-              <Text style={styles.goalLabel}>{cat.label}</Text>
-              <Text style={[styles.goalStatus, status.isOverBudget && styles.overBudget]}>
-                {status.isOverBudget ? 'OVER BUDGET' : `${status.percentage}%`}
-              </Text>
-            </View>
-            <View style={styles.progressBg}>
-              <View style={[
-                styles.progressBar,
-                {
-                  width: `${Math.min(status.percentage, 100)}%`,
-                  backgroundColor: status.isOverBudget ? '#FF3333' : status.percentage > 80 ? '#FFAA00' : '#00FF66',
-                }
-              ]} />
-            </View>
-            <View style={styles.goalFooter}>
-              <Text style={styles.goalSpent}>₹{status.spent.toLocaleString('en-IN')} spent</Text>
-              <Text style={styles.goalLimit}>of ₹{status.goal.monthlyLimit.toLocaleString('en-IN')}</Text>
-            </View>
+            <Text style={[styles.segmentText, activeTab === tab.key && styles.segmentTextActive]}>
+              {tab.label}
+            </Text>
           </TouchableOpacity>
-        );
-      })}
+        ))}
+      </View>
 
-      {showAdd && (
-        <AddBudgetPicker
-          goals={goals}
-          onAdd={handleAdd}
-          onCancel={() => setShowAdd(false)}
-        />
+      {/* Overview Tab */}
+      {activeTab === 'overview' && (
+        <>
+          {statuses.length === 0 && (
+            <View style={styles.empty}>
+              <MaterialCommunityIcons name="target" size={48} color="#333" />
+              <Text style={styles.emptyText}>No budget goals set</Text>
+              <Text style={styles.emptySubtext}>Tap + to add a monthly spending limit</Text>
+            </View>
+          )}
+
+          {statuses.map(status => {
+            const cat = getCategoryConfig(status.goal.category);
+            return (
+              <TouchableOpacity
+                key={status.goal.id}
+                style={styles.goalCard}
+                onLongPress={() => handleDelete(status.goal.id)}
+              >
+                <View style={styles.goalHeader}>
+                  <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
+                  <Text style={styles.goalLabel}>{cat.label}</Text>
+                  <Text style={[styles.goalStatus, status.isOverBudget && styles.overBudget]}>
+                    {status.isOverBudget ? 'OVER BUDGET' : `${status.percentage}%`}
+                  </Text>
+                </View>
+                <View style={styles.progressBg}>
+                  <View style={[
+                    styles.progressBar,
+                    {
+                      width: `${Math.min(status.percentage, 100)}%`,
+                      backgroundColor: status.isOverBudget ? '#FF3333' : status.percentage > 80 ? '#FFAA00' : '#00FF66',
+                    }
+                  ]} />
+                </View>
+                <View style={styles.goalFooter}>
+                  <Text style={styles.goalSpent}>₹{status.spent.toLocaleString('en-IN')} spent</Text>
+                  <Text style={styles.goalLimit}>of ₹{status.goal.monthlyLimit.toLocaleString('en-IN')}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {showAdd && (
+            <AddBudgetPicker goals={goals} onAdd={handleAdd} onCancel={() => setShowAdd(false)} />
+          )}
+
+          <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(!showAdd)}>
+            <MaterialCommunityIcons name={showAdd ? 'close' : 'plus'} size={20} color="#000" />
+            <Text style={styles.addBtnText}>{showAdd ? 'CANCEL' : 'ADD BUDGET'}</Text>
+          </TouchableOpacity>
+        </>
       )}
 
-      <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(!showAdd)}>
-        <MaterialCommunityIcons name={showAdd ? 'close' : 'plus'} size={20} color="#000" />
-        <Text style={styles.addBtnText}>{showAdd ? 'CANCEL' : 'ADD BUDGET'}</Text>
-      </TouchableOpacity>
+      {/* Recurring Tab */}
+      {activeTab === 'recurring' && (
+        <TouchableOpacity style={styles.navCard} onPress={() => router.push('/recurring')}>
+          <Ionicons name="repeat-outline" size={24} color="#00FF66" />
+          <View style={styles.navCardInfo}>
+            <Text style={styles.navCardTitle}>RECURRING EXPENSES</Text>
+            <Text style={styles.navCardDesc}>Manage subscriptions, bills & repeat payments</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#555555" />
+        </TouchableOpacity>
+      )}
+
+      {/* Goals Tab */}
+      {activeTab === 'goals' && (
+        <TouchableOpacity style={styles.navCard} onPress={() => router.push('/goals')}>
+          <Ionicons name="flag-outline" size={24} color="#FFB000" />
+          <View style={styles.navCardInfo}>
+            <Text style={styles.navCardTitle}>SAVINGS GOALS</Text>
+            <Text style={styles.navCardDesc}>Track progress toward financial targets</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#555555" />
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -161,7 +229,28 @@ function AddBudgetPicker({ goals, onAdd, onCancel }: {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   content: { padding: 16, paddingBottom: 40 },
-  header: { color: '#00FF66', fontSize: 16, fontFamily: 'monospace', fontWeight: '700', letterSpacing: 2, marginBottom: 16 },
+  headerRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
+  },
+  backBtn: { padding: 4 },
+  backText: { fontFamily: 'monospace', fontSize: 12, color: '#00FF66', letterSpacing: 1 },
+  header: { fontFamily: 'monospace', fontSize: 16, color: '#00FF66', fontWeight: '700', letterSpacing: 2 },
+  segmentBar: {
+    flexDirection: 'row', backgroundColor: '#0A0A0A', borderRadius: 4, borderWidth: 1,
+    borderColor: '#222222', marginBottom: 16, overflow: 'hidden',
+  },
+  segmentBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  segmentBtnActive: { borderBottomColor: '#00FF66', backgroundColor: '#0A0A0A' },
+  segmentText: { fontFamily: 'monospace', fontSize: 10, color: '#555555', letterSpacing: 0.5 },
+  segmentTextActive: { color: '#00FF66', fontWeight: '700' },
+  navCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#0A0A0A', borderRadius: 4, padding: 16,
+    borderWidth: 1, borderColor: '#222222',
+  },
+  navCardInfo: { flex: 1 },
+  navCardTitle: { fontFamily: 'monospace', fontSize: 13, color: '#E0E0E0', fontWeight: '700' },
+  navCardDesc: { fontFamily: 'monospace', fontSize: 10, color: '#555555', marginTop: 4 },
   empty: { alignItems: 'center', paddingVertical: 40 },
   emptyText: { color: '#FFF', fontFamily: 'monospace', fontSize: 14, marginTop: 12 },
   emptySubtext: { color: '#666', fontFamily: 'monospace', fontSize: 11, marginTop: 4 },
@@ -175,7 +264,10 @@ const styles = StyleSheet.create({
   goalFooter: { flexDirection: 'row', justifyContent: 'space-between' },
   goalSpent: { color: '#FFF', fontFamily: 'monospace', fontSize: 11 },
   goalLimit: { color: '#666', fontFamily: 'monospace', fontSize: 11 },
-  addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#00FF66', paddingVertical: 12, borderRadius: 8, marginTop: 8 },
+  addBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#00FF66', paddingVertical: 12, borderRadius: 8, marginTop: 8,
+  },
   addBtnText: { color: '#000', fontFamily: 'monospace', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
   addForm: { backgroundColor: '#111', borderRadius: 8, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
   formTitle: { color: '#00FF66', fontFamily: 'monospace', fontSize: 12, fontWeight: '700', marginBottom: 12, letterSpacing: 1 },
