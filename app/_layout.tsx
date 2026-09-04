@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import React, { useEffect, useState, useRef } from 'react';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SQLiteProvider } from 'expo-sqlite';
@@ -14,77 +14,100 @@ async function onDatabaseInit(db: any) {
   await initDatabase();
 }
 
-export default function RootLayout() {
+function RootNavigationGate() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const segments = useSegments();
+  const [isReady, setIsReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState<string | null>(null);
+  const hasNavigated = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const onboarded = await isOnboardingComplete();
         const hasPin = await hasPinLock();
-        if (!onboarded) {
-          setInitialRoute('onboarding');
-        } else if (hasPin) {
-          setInitialRoute('pin-lock');
-        } else {
-          setInitialRoute('index');
+        if (!cancelled) {
+          if (!onboarded) {
+            setInitialRoute('onboarding');
+          } else if (hasPin) {
+            setInitialRoute('pin-lock');
+          } else {
+            setInitialRoute('index');
+          }
         }
       } catch (err) {
         console.warn('[LAYOUT] Onboarding check failed:', err);
-        setInitialRoute('onboarding');
+        if (!cancelled) setInitialRoute('onboarding');
       } finally {
-        setReady(true);
+        if (!cancelled) setIsReady(true);
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (ready && initialRoute && initialRoute !== 'index') {
-      const target = initialRoute === 'pin-lock' ? '/pin-lock' : '/onboarding';
-      router.replace(target);
-    }
-  }, [ready, initialRoute]);
+    if (!isReady || initialRoute === null || hasNavigated.current) return;
 
-  if (!ready) {
+    const currentRoute = segments[0] as string | undefined;
+
+    // Only navigate if we're not already on the correct route
+    if (initialRoute === 'onboarding' && currentRoute !== 'onboarding') {
+      hasNavigated.current = true;
+      router.replace('/onboarding');
+    } else if (initialRoute === 'pin-lock' && currentRoute !== 'pin-lock') {
+      hasNavigated.current = true;
+      router.replace('/pin-lock');
+    } else if (initialRoute === 'index' && currentRoute && currentRoute !== 'index') {
+      hasNavigated.current = true;
+      router.replace('/');
+    } else {
+      // Already on the correct route — mark as navigated to prevent re-firing
+      hasNavigated.current = true;
+    }
+  }, [isReady, initialRoute, segments, router]);
+
+  if (!isReady) {
     return (
-      <SafeAreaProvider>
-        <StatusBar style="light" />
-        <View style={{ flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="small" color="#00FF66" />
-        </View>
-      </SafeAreaProvider>
+      <View style={{ flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#00FF66" />
+      </View>
     );
   }
 
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: '#000000' },
+        animation: 'none',
+      }}
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="onboarding" />
+      <Stack.Screen name="pin-lock" />
+      <Stack.Screen name="profile" />
+      <Stack.Screen name="stats" />
+      <Stack.Screen name="budget" />
+      <Stack.Screen name="goals" />
+      <Stack.Screen name="search" />
+      <Stack.Screen name="recurring" />
+      <Stack.Screen name="reminders" />
+      <Stack.Screen name="trips" />
+      <Stack.Screen name="settle" />
+      <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="settings" />
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
       <SQLiteProvider databaseName={DB_NAME} onInit={onDatabaseInit}>
         <LedgerProvider>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: '#000000' },
-              animation: 'none',
-            }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="onboarding" />
-            <Stack.Screen name="pin-lock" />
-            <Stack.Screen name="profile" />
-            <Stack.Screen name="stats" />
-            <Stack.Screen name="budget" />
-            <Stack.Screen name="goals" />
-            <Stack.Screen name="search" />
-            <Stack.Screen name="recurring" />
-            <Stack.Screen name="reminders" />
-            <Stack.Screen name="trips" />
-            <Stack.Screen name="settle" />
-            <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="settings" />
-          </Stack>
+          <RootNavigationGate />
         </LedgerProvider>
       </SQLiteProvider>
     </SafeAreaProvider>
