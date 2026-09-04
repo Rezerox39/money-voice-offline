@@ -4,10 +4,12 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { verifyPinCode, hasPinLock } from '../src/lib/profile';
 
 export default function PinLockScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
@@ -45,7 +47,7 @@ export default function PinLockScreen() {
   const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24), paddingBottom: Math.max(insets.bottom, 16) }]}>
       <Ionicons name="lock-closed" size={40} color={error ? '#FF3333' : '#00FF66'} />
       <Text style={[styles.title, error && styles.titleError]}>
         {error ? 'INCORRECT PIN' : 'ENTER PIN'}

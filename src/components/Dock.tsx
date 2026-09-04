@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ActiveMode } from '../context/LedgerContext';
 
 interface DockProps {
@@ -11,29 +12,61 @@ interface DockProps {
   onQR: () => void;
 }
 
+interface TabItem {
+  key: string;
+  label: string;
+  route: string;
+}
+
+const TABS: TabItem[] = [
+  { key: 'home', label: '[/home]', route: '/' },
+  { key: 'ledger', label: '[#ledger]', route: '/search' },
+  { key: 'budget', label: '[$ budget]', route: '/budget' },
+  { key: 'sys', label: '[⚙ sys]', route: '/settings' },
+];
+
 export function Dock({ mode, activeTripId, onSettle, onQR }: DockProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
 
-  const items = [
-    { icon: 'stats-chart-outline' as const, label: 'STATS', onPress: () => router.push('/stats') },
-    { icon: 'wallet-outline' as const, label: 'BUDGET', onPress: () => router.push('/budget') },
-    { icon: 'flag-outline' as const, label: 'GOALS', onPress: () => router.push('/goals') },
-    { icon: 'repeat-outline' as const, label: 'RECUR', onPress: () => router.push('/recurring') },
-    { icon: 'search-outline' as const, label: 'SEARCH', onPress: () => router.push('/search') },
-    { icon: 'notifications-outline' as const, label: 'ALERT', onPress: () => router.push('/reminders') },
-    { icon: 'person-outline' as const, label: 'USER', onPress: () => router.push('/profile') },
-    { icon: 'settings-outline' as const, label: 'CONFIG', onPress: () => router.push('/settings') },
-  ];
+  function getActiveKey(): string {
+    if (pathname === '/') return 'home';
+    if (pathname.startsWith('/search')) return 'ledger';
+    if (pathname.startsWith('/budget') || pathname.startsWith('/goals') || pathname.startsWith('/recurring')) return 'budget';
+    if (pathname.startsWith('/settings') || pathname.startsWith('/profile')) return 'sys';
+    return '';
+  }
+
+  const activeKey = getActiveKey();
+
+  function handlePress(tab: TabItem) {
+    Haptics.selectionAsync();
+    if (tab.key === 'home') {
+      router.push('/');
+    } else {
+      router.push(tab.route as any);
+    }
+  }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       <View style={styles.row}>
-        {items.map((item, i) => (
-          <TouchableOpacity key={i} style={styles.item} onPress={item.onPress}>
-            <Ionicons name={item.icon} size={16} color="#888888" />
-            <Text style={styles.label}>{item.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {TABS.map((tab) => {
+          const isActive = activeKey === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.item, isActive && styles.itemActive]}
+              onPress={() => handlePress(tab)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.label, isActive && styles.labelActive]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -44,22 +77,33 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#222222',
     backgroundColor: '#0A0A0A',
-    paddingBottom: Platform.OS === 'android' ? 12 : 8,
   },
   row: {
     flexDirection: 'row',
+    height: 48,
+    alignItems: 'center',
     justifyContent: 'space-around',
-    paddingTop: 8,
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
   },
   item: {
+    flex: 1,
     alignItems: 'center',
-    gap: 2,
+    justifyContent: 'center',
+    height: '100%',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  itemActive: {
+    borderBottomColor: '#00FF66',
   },
   label: {
     fontFamily: 'monospace',
-    fontSize: 8,
-    color: '#888888',
+    fontSize: 11,
+    color: '#555555',
     letterSpacing: 0.5,
+  },
+  labelActive: {
+    color: '#00FF66',
+    fontWeight: '700',
   },
 });

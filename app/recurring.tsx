@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RecurringExpense, loadRecurring, saveRecurring, deleteRecurring, createRecurringExpense, isDue, RecurringInterval } from '../src/lib/recurring';
 import { getCategoryConfig, CATEGORY_CONFIGS } from '../src/constants/categories';
 
 export default function RecurringScreen() {
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState<RecurringExpense[]>([]);
   const [showAdd, setShowAdd] = useState(false);
 

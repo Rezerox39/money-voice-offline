@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { Trip, TripExpense, Member, SplitShare, PoolDeposit, PersonalExpense } from '../types';
+import { saveGoal, type SavingsGoal } from './goals';
 import { generateUUID } from './uuid';
 
 let db: SQLite.SQLiteDatabase;
@@ -570,6 +571,105 @@ export async function mergeTripFromPayload(incomingTrip: Trip): Promise<{
   });
 
   return { inserted, updated, membersAdded };
+}
+
+
+// ── Sample Playground Seeding ─────────────────────────────────────
+
+export async function seedPlayground(): Promise<void> {
+  const database = await getDb();
+  const now = Date.now();
+  const tripId = generateUUID();
+  const memberIds = [generateUUID(), generateUUID(), generateUUID(), generateUUID()];
+
+  await database.withExclusiveTransactionAsync(async (txn) => {
+    // Trip: #ladakh-expedition
+    await txn.runAsync(
+      'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      [tripId, 'Ladakh Expedition', 'INR', now, now]
+    );
+
+    // Members: You, Rahul, Amit, Sara
+    const members = [
+      { id: memberIds[0], name: 'You' },
+      { id: memberIds[1], name: 'Rahul' },
+      { id: memberIds[2], name: 'Amit' },
+      { id: memberIds[3], name: 'Sara' },
+    ];
+    for (const m of members) {
+      await txn.runAsync(
+        'INSERT INTO members (id, trip_id, name, upi_or_handle) VALUES (?, ?, ?, ?)',
+        [m.id, tripId, m.name, null]
+      );
+    }
+
+    // Kitty Pool: initial deposit 5000 from You
+    await txn.runAsync(
+      'INSERT INTO pool_deposits (id, trip_id, member_id, amount, created_at) VALUES (?, ?, ?, ?, ?)',
+      [generateUUID(), tripId, memberIds[0], 5000, now]
+    );
+
+    // Expense 1: Highway Dhaba lunch ₹1400 paid by Rahul, split with all
+    const exp1Id = generateUUID();
+    await txn.runAsync(
+      'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [exp1Id, tripId, 'Highway Dhaba lunch', 1400, memberIds[1], 'Food', now]
+    );
+    for (const mid of memberIds) {
+      await txn.runAsync(
+        'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+        [generateUUID(), exp1Id, mid, 350]
+      );
+    }
+
+    // Expense 2: Manali Diesel ₹2800 paid by You, split with all
+    const exp2Id = generateUUID();
+    await txn.runAsync(
+      'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [exp2Id, tripId, 'Manali Diesel', 2800, memberIds[0], 'Transport', now]
+    );
+    for (const mid of memberIds) {
+      await txn.runAsync(
+        'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+        [generateUUID(), exp2Id, mid, 700]
+      );
+    }
+
+    // Expense 3: Campfire Chai ₹320 deducted from Kitty Pool
+    const exp3Id = generateUUID();
+    await txn.runAsync(
+      'INSERT INTO expenses (id, trip_id, title, amount, paid_by, category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [exp3Id, tripId, 'Campfire Chai', 320, 'POOL', 'Food', now]
+    );
+    for (const mid of memberIds) {
+      await txn.runAsync(
+        'INSERT INTO split_shares (id, expense_id, member_id, amount) VALUES (?, ?, ?, ?)',
+        [generateUUID(), exp3Id, mid, 80]
+      );
+    }
+
+    // Personal expenses: Morning Coffee ₹40, Metro Card ₹200
+    await txn.runAsync(
+      'INSERT INTO personal_expenses (id, title, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [generateUUID(), 'Morning Coffee', 40, 'Food', null, now]
+    );
+    await txn.runAsync(
+      'INSERT INTO personal_expenses (id, title, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [generateUUID(), 'Metro Card', 200, 'Transport', null, now]
+    );
+  });
+
+  // Savings Goal: Emergency Reserve ₹25,000 target, ₹8,500 current
+  const goal: SavingsGoal = {
+    id: generateUUID(),
+    name: 'Emergency Reserve',
+    targetAmount: 25000,
+    currentAmount: 8500,
+    currency: 'INR',
+    createdAt: now,
+    color: '#00FF66',
+  };
+  await saveGoal(goal);
 }
 
 // ── Emergency Reset (Panic Wipe) ───────────────────────────────────

@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSQLiteContext } from 'expo-sqlite';
 import { matchesFilters, SearchFilters } from '../src/lib/search';
@@ -15,6 +16,7 @@ interface ExpenseRow {
 }
 
 export default function SearchScreen() {
+  const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ExpenseRow[]>([]);
@@ -23,20 +25,25 @@ export default function SearchScreen() {
   const search = useCallback(async (q: string, cat?: string) => {
     if (!q.trim() && !cat) { setResults([]); return; }
 
-    const personal = await db.getAllAsync<any>('SELECT * FROM personal_expenses');
-    const trips = await db.getAllAsync<any>('SELECT * FROM expenses');
+    try {
+      const personal = await db.getAllAsync<any>('SELECT * FROM personal_expenses');
+      const trips = await db.getAllAsync<any>('SELECT * FROM expenses');
 
-    const all: ExpenseRow[] = [
-      ...personal.map((e: any) => ({ ...e, source: 'personal' as const })),
-      ...trips.map((e: any) => ({ ...e, source: 'trip' as const, created_at: e.updated_at })),
-    ];
+      const all: ExpenseRow[] = [
+        ...(Array.isArray(personal) ? personal.map((e: any) => ({ ...e, source: 'personal' as const })) : []),
+        ...(Array.isArray(trips) ? trips.map((e: any) => ({ ...e, source: 'trip' as const, created_at: e.updated_at })) : []),
+      ];
 
-    const filters: SearchFilters = {
-      query: q,
-      category: cat,
-    };
+      const filters: SearchFilters = {
+        query: q,
+        category: cat,
+      };
 
-    setResults(matchesFilters(all, filters));
+      setResults(matchesFilters(all, filters));
+    } catch (err) {
+      console.warn('[DB_RECOVERY] search failed:', err);
+      setResults([]);
+    }
   }, [db]);
 
   const handleQuery = (text: string) => {
@@ -50,7 +57,7 @@ export default function SearchScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
       {/* Search Bar */}
       <View style={styles.searchBar}>
         <MaterialCommunityIcons name="magnify" size={18} color="#666" />

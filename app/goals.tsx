@@ -3,12 +3,14 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ScrollView, Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SavingsGoal, loadGoals, saveGoal, deleteGoal, addToGoal, computeGoalProgress, pickGoalColor } from '../src/lib/goals';
 import { generateUUID } from '../src/lib/uuid';
 
 export default function GoalsScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [goals, setGoals] = useState<SavingsGoal[]>([]);
   const [showAdd, setShowAdd] = useState(false);

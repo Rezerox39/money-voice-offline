@@ -5,72 +5,56 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completeOnboarding } from '../src/lib/profile';
+import { seedPlayground } from '../src/lib/database';
 import { CURRENCIES } from '../src/types';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-
-const STEPS = [
-  {
-    icon: 'mic-outline' as const,
-    title: 'Voice-First Tracking',
-    subtitle: 'Speak naturally. Say "Chai 30" or "Dinner 1200 split with all" and we handle the rest.',
-    accent: '#00FF66',
-  },
-  {
-    icon: 'people-outline' as const,
-    title: 'Group Trip Splitting',
-    subtitle: 'Create trips, add members, split expenses equally or by custom amounts. Zero internet needed.',
-    accent: '#FFB000',
-  },
-  {
-    icon: 'qr-code-outline' as const,
-    title: 'Offline QR Sync',
-    subtitle: 'Sync trips between phones using animated QR codes. No servers, no accounts, pure peer-to-peer.',
-    accent: '#3366FF',
-  },
-  {
-    icon: 'shield-checkmark-outline' as const,
-    title: '100% Offline & Private',
-    subtitle: 'All data stays on your device. No cloud, no tracking, no accounts. You own your data.',
-    accent: '#00FF66',
-  },
-];
 
 const CURRENCY_LIST = Object.entries(CURRENCIES);
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const insets = useSafeAreaInsets();
+  const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('INR');
+  const [isSeeding, setIsSeeding] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
-  const isSetupStep = step === STEPS.length;
-
-  function handleNext() {
-    if (step < STEPS.length) {
-      const next = step + 1;
-      setStep(next);
-      scrollRef.current?.scrollTo({ x: next * SCREEN_W, animated: true });
-    }
+  function goToStep(s: number) {
+    setStep(s);
+    scrollRef.current?.scrollTo({ x: (s - 1) * SCREEN_W, animated: true });
   }
 
-  function handlePrev() {
-    if (step > 0) {
-      const prev = step - 1;
-      setStep(prev);
-      scrollRef.current?.scrollTo({ x: prev * SCREEN_W, animated: true });
-    }
-  }
-
-  async function handleFinish() {
+  async function handleProceedBlank() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     if (!name.trim()) {
-      Alert.alert('Name Required', 'Please enter your name to continue.');
+      Alert.alert('Name Required', 'Please enter your node call-sign.');
       return;
     }
     await completeOnboarding(name.trim(), selectedCurrency);
     router.replace('/');
+  }
+
+  async function handleLoadPlayground() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setIsSeeding(true);
+    try {
+      if (!name.trim()) {
+        Alert.alert('Name Required', 'Please enter your node call-sign.');
+        setIsSeeding(false);
+        return;
+      }
+      await completeOnboarding(name.trim(), selectedCurrency);
+      await seedPlayground();
+      router.replace('/');
+    } catch (err: any) {
+      Alert.alert('Seed Failed', err?.message ?? 'Unknown error');
+      setIsSeeding(false);
+    }
   }
 
   function handleSkip() {
@@ -79,7 +63,7 @@ export default function OnboardingScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24), paddingBottom: Math.max(insets.bottom, 16) }]}>
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -88,89 +72,102 @@ export default function OnboardingScreen() {
         scrollEnabled={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {STEPS.map((s, i) => (
-          <View key={i} style={styles.slide}>
-            <View style={[styles.iconCircle, { borderColor: s.accent }]}>
-              <Ionicons name={s.icon} size={48} color={s.accent} />
-            </View>
-            <Text style={[styles.slideTitle, { color: s.accent }]}>{s.title}</Text>
-            <Text style={styles.slideSubtitle}>{s.subtitle}</Text>
-          </View>
-        ))}
-
-        {/* Setup Step */}
+        {/* Step 1: Identify Your Node */}
         <View style={styles.slide}>
-          <View style={styles.setupCard}>
-            <Ionicons name="finger-print-outline" size={36} color="#00FF66" />
-            <Text style={styles.setupTitle}>SETUP YOUR NODE</Text>
-            <Text style={styles.setupSubtitle}>Quick setup. No account needed.</Text>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>YOUR NAME</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your name"
-                placeholderTextColor="#555555"
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                maxLength={30}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>DEFAULT CURRENCY</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.currencyScroll}>
-                {CURRENCY_LIST.map(([code, info]) => (
-                  <TouchableOpacity
-                    key={code}
-                    style={[styles.currencyChip, selectedCurrency === code && styles.currencyChipActive]}
-                    onPress={() => setSelectedCurrency(code)}
-                  >
-                    <Text style={[styles.currencyChipText, selectedCurrency === code && styles.currencyChipTextActive]}>
-                      {info.symbol} {code}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
+          <View style={[styles.iconCircle, { borderColor: '#00FF66' }]}>
+            <Ionicons name="finger-print-outline" size={48} color="#00FF66" />
           </View>
+          <Text style={[styles.slideTitle, { color: '#00FF66' }]}>IDENTIFY YOUR NODE</Text>
+          <Text style={styles.slideSubtitle}>What should we call you?</Text>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>CALL-SIGN</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="You"
+              placeholderTextColor="#555555"
+              value={name}
+              onChangeText={setName}
+              autoCapitalize="words"
+              maxLength={30}
+              autoFocus
+            />
+          </View>
+          <TouchableOpacity
+            style={[styles.navBtnPrimary, !name.trim() && styles.navBtnPrimaryDisabled]}
+            onPress={() => { if (name.trim()) goToStep(2); }}
+            disabled={!name.trim()}
+          >
+            <Text style={styles.navBtnPrimaryText}>CONTINUE</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Step 2: Currency */}
+        <View style={styles.slide}>
+          <View style={[styles.iconCircle, { borderColor: '#FFB000' }]}>
+            <Ionicons name="cash-outline" size={48} color="#FFB000" />
+          </View>
+          <Text style={[styles.slideTitle, { color: '#FFB000' }]}>DEFAULT CURRENCY</Text>
+          <Text style={styles.slideSubtitle}>Choose your primary currency</Text>
+          <View style={styles.currencyGrid}>
+            {CURRENCY_LIST.map(([code, info]) => (
+              <TouchableOpacity
+                key={code}
+                style={[styles.currencyBtn, selectedCurrency === code && styles.currencyBtnActive]}
+                onPress={() => { Haptics.selectionAsync(); setSelectedCurrency(code); }}
+              >
+                <Text style={styles.currencySymbol}>{info.symbol}</Text>
+                <Text style={[styles.currencyCode, selectedCurrency === code && styles.currencyCodeActive]}>{code}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={styles.navBtnPrimary}
+            onPress={() => goToStep(3)}
+          >
+            <Text style={styles.navBtnPrimaryText}>CONTINUE</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Step 3: Action Selector */}
+        <View style={styles.slide}>
+          <View style={[styles.iconCircle, { borderColor: '#3366FF' }]}>
+            <Ionicons name="rocket-outline" size={48} color="#3366FF" />
+          </View>
+          <Text style={[styles.slideTitle, { color: '#3366FF' }]}>LAUNCH SEQUENCE</Text>
+          <Text style={styles.slideSubtitle}>Ready to go, {name || 'Node'}.</Text>
+
+          <TouchableOpacity
+            style={styles.playgroundBtn}
+            onPress={handleLoadPlayground}
+            disabled={isSeeding}
+          >
+            <Ionicons name="flash" size={20} color="#00FF66" />
+            <View style={styles.playgroundInfo}>
+              <Text style={styles.playgroundTitle}>LOAD SAMPLE PLAYGROUND</Text>
+              <Text style={styles.playgroundDesc}>#ladakh-expedition · 4 members · ₹5,000 kitty</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.blankBtn}
+            onPress={handleProceedBlank}
+          >
+            <Text style={styles.blankBtnText}>PROCEED BLANK</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
       {/* Progress Dots */}
       <View style={styles.dotsRow}>
-        {STEPS.map((_, i) => (
-          <View
-            key={i}
-            style={[styles.dot, i <= step && styles.dotActive]}
-          />
+        {[1, 2, 3].map(s => (
+          <View key={s} style={[styles.dot, step >= s && styles.dotActive]} />
         ))}
       </View>
 
-      {/* Navigation */}
-      <View style={styles.navRow}>
-        {step > 0 ? (
-          <TouchableOpacity style={styles.navBtn} onPress={handlePrev}>
-            <Ionicons name="chevron-back" size={18} color="#888888" />
-            <Text style={styles.navBtnText}>BACK</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.navBtn} onPress={handleSkip}>
-            <Text style={styles.navBtnText}>SKIP</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity
-          style={[styles.navBtnPrimary, (!isSetupStep || !name.trim()) && styles.navBtnPrimaryDisabled]}
-          onPress={isSetupStep ? handleFinish : handleNext}
-        >
-          <Text style={styles.navBtnPrimaryText}>
-            {isSetupStep ? 'START TRACKING' : 'NEXT'}
-          </Text>
-          {!isSetupStep && <Ionicons name="chevron-forward" size={18} color="#000000" />}
-        </TouchableOpacity>
-      </View>
+      {/* Skip */}
+      <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
+        <Text style={styles.skipBtnText}>SKIP</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -179,150 +176,79 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   scrollContent: { flexGrow: 1 },
   slide: {
-    width: SCREEN_W,
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
+    width: SCREEN_W, flex: 1, justifyContent: 'center',
+    alignItems: 'center', paddingHorizontal: 32,
   },
   iconCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
+    width: 100, height: 100, borderRadius: 50, borderWidth: 2,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 24,
   },
   slideTitle: {
-    fontFamily: 'monospace',
-    fontSize: 22,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 12,
+    fontFamily: 'monospace', fontSize: 20, fontWeight: '700',
+    textAlign: 'center', marginBottom: 8,
   },
   slideSubtitle: {
-    fontFamily: 'monospace',
-    fontSize: 13,
-    color: '#888888',
-    textAlign: 'center',
-    lineHeight: 20,
+    fontFamily: 'monospace', fontSize: 13, color: '#888888',
+    textAlign: 'center', marginBottom: 24,
   },
-  setupCard: {
-    backgroundColor: '#0A0A0A',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#222222',
-    padding: 24,
-    alignItems: 'center',
-    gap: 16,
-    width: '100%',
-  },
-  setupTitle: {
-    fontFamily: 'monospace',
-    fontSize: 16,
-    color: '#00FF66',
-    fontWeight: '700',
-    letterSpacing: 2,
-  },
-  setupSubtitle: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#888888',
-  },
-  inputGroup: { width: '100%', gap: 6 },
+  inputGroup: { width: '100%', gap: 6, marginBottom: 20 },
   inputLabel: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    color: '#FFB000',
-    letterSpacing: 1,
-    fontWeight: '700',
+    fontFamily: 'monospace', fontSize: 10, color: '#FFB000',
+    letterSpacing: 1, fontWeight: '700',
   },
   input: {
-    fontFamily: 'monospace',
-    fontSize: 14,
-    color: '#E0E0E0',
+    fontFamily: 'monospace', fontSize: 14, color: '#E0E0E0',
+    backgroundColor: '#1F1F1F', borderRadius: 4, borderWidth: 1,
+    borderColor: '#333333', padding: 12,
+  },
+  currencyGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 12,
+    justifyContent: 'center', marginBottom: 24,
+  },
+  currencyBtn: {
+    width: 80, alignItems: 'center', paddingVertical: 12,
+    borderRadius: 6, borderWidth: 1, borderColor: '#333333',
     backgroundColor: '#1F1F1F',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#333333',
-    padding: 12,
   },
-  currencyScroll: { flexDirection: 'row' },
-  currencyChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#333333',
-    backgroundColor: '#1F1F1F',
-    marginRight: 8,
+  currencyBtnActive: { borderColor: '#FFB000', backgroundColor: '#332200' },
+  currencySymbol: { fontSize: 20, marginBottom: 4 },
+  currencyCode: {
+    fontFamily: 'monospace', fontSize: 11, color: '#888888',
   },
-  currencyChipActive: {
-    borderColor: '#00FF66',
-    backgroundColor: '#003311',
+  currencyCodeActive: { color: '#FFB000', fontWeight: '700' },
+  playgroundBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    width: '100%', backgroundColor: '#0A0A0A', borderRadius: 6,
+    padding: 16, borderWidth: 1, borderColor: '#00FF66', marginBottom: 12,
   },
-  currencyChipText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#888888',
+  playgroundInfo: { flex: 1 },
+  playgroundTitle: {
+    fontFamily: 'monospace', fontSize: 12, color: '#00FF66',
+    fontWeight: '700', letterSpacing: 1,
   },
-  currencyChipTextActive: {
-    color: '#00FF66',
-    fontWeight: '700',
+  playgroundDesc: {
+    fontFamily: 'monospace', fontSize: 10, color: '#888888', marginTop: 4,
   },
-  dotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
+  blankBtn: {
+    width: '100%', paddingVertical: 14, borderRadius: 6,
+    borderWidth: 1, borderColor: '#333333', alignItems: 'center',
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#333333',
+  blankBtnText: {
+    fontFamily: 'monospace', fontSize: 12, color: '#888888',
+    letterSpacing: 1, fontWeight: '700',
   },
-  dotActive: {
-    backgroundColor: '#00FF66',
-    width: 24,
-  },
-  navRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingBottom: Platform.OS === 'android' ? 32 : 16,
-  },
-  navBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    padding: 12,
-  },
-  navBtnText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#888888',
-    letterSpacing: 1,
-  },
+  dotsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingVertical: 12 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#333333' },
+  dotActive: { backgroundColor: '#00FF66', width: 24 },
   navBtnPrimary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#00FF66',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 4,
+    backgroundColor: '#00FF66', paddingVertical: 14, paddingHorizontal: 32,
+    borderRadius: 4, width: '100%', alignItems: 'center',
   },
-  navBtnPrimaryDisabled: {
-    opacity: 0.3,
-  },
+  navBtnPrimaryDisabled: { opacity: 0.3 },
   navBtnPrimaryText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#000000',
-    fontWeight: '700',
-    letterSpacing: 1,
+    fontFamily: 'monospace', fontSize: 12, color: '#000000',
+    fontWeight: '700', letterSpacing: 1,
   },
+  skipBtn: { alignSelf: 'center', padding: 12 },
+  skipBtnText: { fontFamily: 'monospace', fontSize: 12, color: '#555555', letterSpacing: 1 },
 });

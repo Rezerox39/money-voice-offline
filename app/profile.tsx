@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ScrollView, Platform, Switch,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getProfile, saveProfile, setPinCode, UserProfile } from '../src/lib/profile';
@@ -10,6 +11,7 @@ import { getStreakData, formatStreak, StreakData } from '../src/lib/streak';
 import { CURRENCIES } from '../src/types';
 
 export default function ProfileScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [streak, setStreak] = useState<StreakData | null>(null);

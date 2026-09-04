@@ -2,27 +2,35 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSQLiteContext } from 'expo-sqlite';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BudgetGoal, BudgetStatus, loadBudgetGoals, saveBudgetGoal, deleteBudgetGoal, computeBudgetStatus } from '../src/lib/budget';
 import { CATEGORY_CONFIGS, getCategoryConfig } from '../src/constants/categories';
 import { generateUUID } from '../src/lib/uuid';
 
 export default function BudgetScreen() {
+  const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
   const [goals, setGoals] = useState<BudgetGoal[]>([]);
   const [statuses, setStatuses] = useState<BudgetStatus[]>([]);
   const [showAdd, setShowAdd] = useState(false);
 
   const load = useCallback(async () => {
-    const loadedGoals = await loadBudgetGoals();
-    setGoals(loadedGoals);
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime();
-    const expenses = await db.getAllAsync<any>(
-      'SELECT * FROM personal_expenses WHERE created_at >= ? AND created_at <= ?',
-      [monthStart, monthEnd]
-    );
-    setStatuses(computeBudgetStatus(loadedGoals, expenses, now.getMonth(), now.getFullYear()));
+    try {
+      const loadedGoals = await loadBudgetGoals();
+      setGoals(Array.isArray(loadedGoals) ? loadedGoals : []);
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime();
+      const expenses = await db.getAllAsync<any>(
+        'SELECT * FROM personal_expenses WHERE created_at >= ? AND created_at <= ?',
+        [monthStart, monthEnd]
+      );
+      setStatuses(computeBudgetStatus(loadedGoals, Array.isArray(expenses) ? expenses : [], now.getMonth(), now.getFullYear()));
+    } catch (err) {
+      console.warn('[DB_RECOVERY] budget load failed:', err);
+      setGoals([]);
+      setStatuses([]);
+    }
   }, [db]);
 
   useEffect(() => { load(); }, [load]);
@@ -48,7 +56,7 @@ export default function BudgetScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={[styles.content, { paddingTop: insets.top }]}>
       <Text style={styles.header}>BUDGET GOALS</Text>
 
       {statuses.length === 0 && (

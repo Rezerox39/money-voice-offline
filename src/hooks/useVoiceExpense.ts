@@ -331,6 +331,39 @@ export function useVoiceExpense(
     [clearCountdown]
   );
 
+  const submitText = useCallback(async (text: string) => {
+    // Rapid-fire debounce: commit pending transaction first
+    if (parsedResultRef.current && countdownRef.current) {
+      clearCountdown();
+      await executeCommit(parsedResultRef.current, transcriptRef.current);
+    }
+
+    resetState();
+    const trip = tripRef.current;
+    const memberNames = trip?.members.map((m) => m.name) ?? [];
+
+    const parsed = parseVoiceInput(text, {
+      memberNames,
+      leaderId: trip?.members[0]?.id ?? null,
+      currentUserId: trip?.members[0]?.id ?? '__SELF__',
+    });
+
+    if (parsed.type === 'query' || parsed.type === 'command') {
+      await audioParseSuccess();
+      setState((prev) => ({
+        ...prev,
+        isRecording: false,
+        rawTranscript: text,
+        parsedResult: parsed,
+        stage: 'parsed',
+        countdown: 0,
+      }));
+      return;
+    }
+
+    startCountdown(parsed, text);
+  }, [resetState, startCountdown, clearCountdown, executeCommit]);
+
   return {
     state,
     startRecording,
@@ -338,5 +371,6 @@ export function useVoiceExpense(
     cancelCommit,
     confirmImmediately,
     editParsedResult,
+    submitText,
   };
 }

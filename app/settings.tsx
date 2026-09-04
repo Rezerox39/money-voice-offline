@@ -5,11 +5,13 @@
 
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { resetDatabase } from '../src/lib/database';
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [isWiping, setIsWiping] = useState(false);
   const [step, setStep] = useState<'idle' | 'confirm1' | 'confirm2'>('idle');

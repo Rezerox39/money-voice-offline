@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ScrollView, Platform, Switch,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Reminder, loadReminders, saveReminder, deleteReminder, toggleReminder, computeNextDueDate, formatFrequency } from '../src/lib/reminders';
@@ -11,6 +12,7 @@ import { generateUUID } from '../src/lib/uuid';
 const FREQUENCIES: Reminder['frequency'][] = ['daily', 'weekly', 'monthly', 'yearly'];
 
 export default function RemindersScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [showAdd, setShowAdd] = useState(false);

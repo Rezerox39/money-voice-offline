@@ -2,12 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSQLiteContext } from 'expo-sqlite';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { computePersonalStats, getDailyBreakdown, CategoryStat } from '../src/lib/stats';
 import { getCategoryConfig } from '../src/constants/categories';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function StatsScreen() {
+  const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
   const [expenses, setExpenses] = useState<any[]>([]);
   const [period, setPeriod] = useState<'week' | 'month' | 'year' | 'all'>('month');
@@ -17,8 +19,13 @@ export default function StatsScreen() {
   }, []);
 
   const loadExpenses = async () => {
-    const rows = await db.getAllAsync<any>('SELECT * FROM personal_expenses ORDER BY created_at DESC');
-    setExpenses(rows);
+    try {
+      const rows = await db.getAllAsync<any>('SELECT * FROM personal_expenses ORDER BY created_at DESC');
+      setExpenses(Array.isArray(rows) ? rows : []);
+    } catch (err) {
+      console.warn('[DB_RECOVERY] stats loadExpenses failed:', err);
+      setExpenses([]);
+    }
   };
 
   const timeRange = useMemo(() => {
@@ -53,7 +60,7 @@ export default function StatsScreen() {
   ];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={styles.content}>
       <Text style={styles.header}>STATISTICS</Text>
 
       {/* Period Selector */}
