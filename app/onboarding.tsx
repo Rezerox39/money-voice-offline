@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Dimensions, Platform, ScrollView, Alert,
+  Dimensions, Platform, ScrollView, Alert, PermissionsAndroid,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,11 +22,35 @@ export default function OnboardingScreen() {
   const [name, setName] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('INR');
   const [isSeeding, setIsSeeding] = useState(false);
+  const [micGranted, setMicGranted] = useState(false);
+  const [camGranted, setCamGranted] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   function goToStep(s: number) {
     setStep(s);
     scrollRef.current?.scrollTo({ x: (s - 1) * SCREEN_W, animated: true });
+  }
+
+  async function requestAllPermissions() {
+    try {
+      const mic = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        { title: 'Microphone', message: 'For voice commands and expenses.', buttonPositive: 'Allow' }
+      );
+      setMicGranted(mic === PermissionsAndroid.RESULTS.GRANTED);
+
+      const cam = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        { title: 'Camera', message: 'For scanning QR codes to sync trips.', buttonPositive: 'Allow' }
+      );
+      setCamGranted(cam === PermissionsAndroid.RESULTS.GRANTED);
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      goToStep(3);
+    } catch (err) {
+      console.warn('[PERMS] Error requesting permissions:', err);
+      goToStep(3);
+    }
   }
 
   async function handleProceedBlank() {
@@ -128,7 +152,48 @@ export default function OnboardingScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Step 3: Action Selector */}
+        {/* Step 3: Permissions */}
+        <View style={styles.slide}>
+          <View style={[styles.iconCircle, { borderColor: '#FF3333' }]}>
+            <Ionicons name="shield-checkmark-outline" size={48} color="#FF3333" />
+          </View>
+          <Text style={[styles.slideTitle, { color: '#FF3333' }]}>APP PERMISSIONS</Text>
+          <Text style={styles.slideSubtitle}>Allow these for the full experience</Text>
+
+          <View style={styles.permList}>
+            <View style={[styles.permItem, micGranted && styles.permItemGranted]}>
+              <Ionicons name="mic-outline" size={20} color={micGranted ? '#00FF66' : '#FF3333'} />
+              <View style={styles.permInfo}>
+                <Text style={styles.permName}>MICROPHONE</Text>
+                <Text style={styles.permDesc}>Voice commands for expenses</Text>
+              </View>
+              {micGranted ? <Text style={styles.permCheck}>GRANTED</Text> : null}
+            </View>
+
+            <View style={[styles.permItem, camGranted && styles.permItemGranted]}>
+              <Ionicons name="camera-outline" size={20} color={camGranted ? '#00FF66' : '#FF3333'} />
+              <View style={styles.permInfo}>
+                <Text style={styles.permName}>CAMERA</Text>
+                <Text style={styles.permDesc}>QR code sync for trips</Text>
+              </View>
+              {camGranted ? <Text style={styles.permCheck}>GRANTED</Text> : null}
+            </View>
+          </View>
+
+          <TouchableOpacity style={styles.navBtnPrimary} onPress={requestAllPermissions}>
+            <Ionicons name="shield-checkmark" size={16} color="#000000" />
+            <Text style={styles.navBtnPrimaryText}>ALLOW & CONTINUE</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.skipPermBtn}
+            onPress={() => goToStep(4)}
+          >
+            <Text style={styles.skipPermBtnText}>SKIP FOR NOW</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Step 4: Action Selector */}
         <View style={styles.slide}>
           <View style={[styles.iconCircle, { borderColor: '#3366FF' }]}>
             <Ionicons name="rocket-outline" size={48} color="#3366FF" />
@@ -159,7 +224,7 @@ export default function OnboardingScreen() {
 
       {/* Progress Dots */}
       <View style={styles.dotsRow}>
-        {[1, 2, 3].map(s => (
+        {[1, 2, 3, 4].map(s => (
           <View key={s} style={[styles.dot, step >= s && styles.dotActive]} />
         ))}
       </View>
@@ -249,6 +314,19 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace', fontSize: 12, color: '#000000',
     fontWeight: '700', letterSpacing: 1,
   },
+  skipPermBtn: { paddingVertical: 12, marginTop: 8 },
+  skipPermBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#555555', letterSpacing: 1, textDecorationLine: 'underline' },
+  permList: { width: '100%', gap: 12, marginBottom: 20 },
+  permItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#1F1F1F', borderRadius: 6, padding: 14,
+    borderWidth: 1, borderColor: '#FF3333',
+  },
+  permItemGranted: { borderColor: '#00FF66' },
+  permInfo: { flex: 1 },
+  permName: { fontFamily: 'monospace', fontSize: 12, color: '#E0E0E0', fontWeight: '700', letterSpacing: 0.5 },
+  permDesc: { fontFamily: 'monospace', fontSize: 10, color: '#555555', marginTop: 2 },
+  permCheck: { fontFamily: 'monospace', fontSize: 10, color: '#00FF66', fontWeight: '700', letterSpacing: 1 },
   skipBtn: { alignSelf: 'center', padding: 12 },
   skipBtnText: { fontFamily: 'monospace', fontSize: 12, color: '#555555', letterSpacing: 1 },
 });

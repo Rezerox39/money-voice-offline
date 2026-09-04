@@ -15,9 +15,11 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getTripById } from '../../../src/lib/database';
+import { getTripById, ensureGroupCode } from '../../../src/lib/database';
 import { exportTripAsFile } from '../../../src/lib/qr-sync';
 import { encodeTripMesh } from '../../../src/lib/qrMesh';
+import * as Clipboard from 'expo-clipboard';
+import QRCode from 'react-native-qrcode-svg';
 import { AnimatedQR } from '../../../src/components/AnimatedQR';
 import { Trip } from '../../../src/types';
 import { SPACING } from '../../../src/constants';
@@ -26,6 +28,7 @@ export default function ShareQRScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [trip, setTrip] = useState<Trip | null>(null);
+  const [groupCode, setGroupCode] = useState<string | null>(null);
   const [isOversized, setIsOversized] = useState(false);
   const [meshInfo, setMeshInfo] = useState<{ frames: number; bytes: number } | null>(null);
 
@@ -38,6 +41,8 @@ export default function ShareQRScreen() {
     const t = await getTripById(id);
     if (!t) return;
     setTrip(t);
+    const code = await ensureGroupCode(id);
+    setGroupCode(code);
 
     const json = JSON.stringify(t);
     const mesh = encodeTripMesh(json);
@@ -72,8 +77,23 @@ export default function ShareQRScreen() {
         Have your friend tap [QR] in their Money Voice app
       </Text>
 
-      {/* QR Display */}
-      <AnimatedQR data={JSON.stringify(trip)} />
+      {/* Group Code Invite QR */}
+      {groupCode && (
+        <View style={{ alignItems: 'center', gap: 12 }}>
+          <Text style={styles.subtitle}>GROUP CODE: {groupCode}</Text>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 8, padding: 16 }}>
+            <QRCode value={`MV_JOIN:${groupCode}`} size={200} backgroundColor="#FFFFFF" color="#000000" />
+          </View>
+          <Text style={styles.subtitle}>Friend taps [JOIN GROUP] and enters this code</Text>
+        </View>
+      )}
+
+      {/* Full Data Sync QR */}
+      <View style={{ marginTop: 24, alignItems: 'center', gap: 8 }}>
+        <Text style={[styles.title, { fontSize: 14 }]}>DATA SYNC QR</Text>
+        <Text style={styles.subtitle}>Full trip data backup (animated for large payloads)</Text>
+        <AnimatedQR data={JSON.stringify(trip)} />
+      </View>
 
       {/* Mesh Info */}
       {meshInfo && (

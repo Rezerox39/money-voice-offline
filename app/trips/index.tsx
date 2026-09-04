@@ -48,6 +48,11 @@ export default function TripsScreen() {
     router.push('/trips/new');
   }
 
+  function handleJoinTrip() {
+    Haptics.selectionAsync();
+    router.push('/trips/join');
+  }
+
   function renderTrip({ item }: { item: Trip }) {
     const currency = CURRENCIES[item.currency] || { symbol: '₹' };
     const totalExpenses = item.expenses.reduce((s, e) => s + e.amount, 0);
@@ -85,15 +90,24 @@ export default function TripsScreen() {
           </View>
         </View>
 
-        <Text style={styles.tripDate}>
-          {new Date(item.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
-        </Text>
+        <View style={styles.tripFooterRow}>
+          <Text style={styles.tripDate}>
+            {new Date(item.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </Text>
+          <TouchableOpacity
+            style={styles.inviteLink}
+            onPress={() => router.push(`/trips/invite?id=${item.id}`)}
+          >
+            <Ionicons name="person-add-outline" size={12} color="#FFB000" />
+            <Text style={styles.inviteLinkText}>INVITE</Text>
+          </TouchableOpacity>
+        </View>
       </TouchableOpacity>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -125,12 +139,18 @@ export default function TripsScreen() {
         />
       )}
 
-      {/* Create Button */}
+      {/* Create & Join Buttons */}
       {!isLoading && (
-        <TouchableOpacity style={styles.createBtn} onPress={handleCreateTrip}>
-          <Ionicons name="add-circle" size={20} color="#000000" />
-          <Text style={styles.createBtnText}>CREATE NEW TRIP</Text>
-        </TouchableOpacity>
+        <View style={styles.bottomActions}>
+          <TouchableOpacity style={styles.joinBtn} onPress={handleJoinTrip}>
+            <Ionicons name="qr-code-outline" size={20} color="#00FF66" />
+            <Text style={styles.joinBtnText}>JOIN GROUP</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.createBtn} onPress={handleCreateTrip}>
+            <Ionicons name="add-circle" size={20} color="#000000" />
+            <Text style={styles.createBtnText}>CREATE TRIP</Text>
+          </TouchableOpacity>
+        </View>
       )}
     </View>
   );
@@ -164,11 +184,24 @@ const styles = StyleSheet.create({
   statItem: { gap: 2 },
   statLabel: { fontFamily: 'monospace', fontSize: 9, color: '#555555', letterSpacing: 1 },
   statValue: { fontFamily: 'monospace', fontSize: 13, color: '#FFB000', fontWeight: '700' },
+  tripFooterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tripDate: { fontFamily: 'monospace', fontSize: 10, color: '#333333' },
+  inviteLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  inviteLinkText: { fontFamily: 'monospace', fontSize: 10, color: '#FFB000', fontWeight: '700', letterSpacing: 0.5 },
+  bottomActions: {
+    flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 24, paddingTop: 4,
+  },
+  joinBtn: {
+    flex: 1,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+    backgroundColor: '#0A0A0A', borderRadius: 6, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#00FF66',
+  },
+  joinBtnText: { fontFamily: 'monospace', fontSize: 12, color: '#00FF66', fontWeight: '700', letterSpacing: 0.5 },
   createBtn: {
-    position: 'absolute', bottom: 20, left: 16, right: 16,
+    flex: 1,
     flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
     backgroundColor: '#00FF66', borderRadius: 6, paddingVertical: 14,
   },
-  createBtnText: { fontFamily: 'monospace', fontSize: 13, color: '#000000', fontWeight: '700', letterSpacing: 1 },
+  createBtnText: { fontFamily: 'monospace', fontSize: 12, color: '#000000', fontWeight: '700', letterSpacing: 0.5 },
 });

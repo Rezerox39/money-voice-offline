@@ -63,6 +63,7 @@ export interface Trip {
   expenses: TripExpense[];
   createdAt: number;
   updatedAt: number;
+  groupCode?: string;
 }
 
 export interface SettlementTransaction {

@@ -6,7 +6,7 @@
     "scheme": "moneyvoice",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.swoyef.moneyvoice"
@@ -31,11 +31,19 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain"
+        }
+      ],
       "expo-router",
       "expo-sqlite",
       "expo-sharing",
       "expo-secure-store",
-      "expo-splash-screen",
       [
         "expo-camera",
         {
@@ -46,6 +54,10 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "splash": {
+      "backgroundColor": "#000000",
+      "resizeMode": "contain"
     }
   }
 }

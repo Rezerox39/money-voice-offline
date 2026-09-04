@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet,
   Alert, ScrollView, Platform,
@@ -14,6 +14,8 @@ import {
   getTripById, addMember, deleteTrip, deleteExpense, addPoolDeposit,
 } from '../../src/lib/database';
 import { simplifyDebts, computePoolTelemetry } from '../../src/lib/debt';
+import { useAutoSync } from '../../src/hooks/useAutoSync';
+import { registerPeerByIP, getDeviceLANIP } from '../../src/lib/lanSync';
 import { Trip, CURRENCIES, PoolDeposit } from '../../src/types';
 
 export default function TripDetailScreen() {
@@ -26,6 +28,9 @@ export default function TripDetailScreen() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showPoolDeposit, setShowPoolDeposit] = useState(false);
   const [poolAmount, setPoolAmount] = useState('');
+  const [showPeerInput, setShowPeerInput] = useState(false);
+  const [peerIP, setPeerIP] = useState('');
+  const [ownIP, setOwnIP] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -42,6 +47,12 @@ export default function TripDetailScreen() {
       console.warn('[DB_RECOVERY] loadTrip failed:', err);
     }
   }
+
+  const autoSync = useAutoSync(id ?? null);
+
+  useEffect(() => {
+    getDeviceLANIP().then(setOwnIP);
+  }, []);
 
   async function handleAddMember() {
     if (!newMemberName.trim() || !id) return;
@@ -63,6 +74,17 @@ export default function TripDetailScreen() {
     await addPoolDeposit(id, memberId, amt);
     setPoolAmount('');
     setShowPoolDeposit(false);
+    loadTrip();
+  }
+
+  async function handleAddPeer() {
+    const ip = peerIP.trim();
+    if (!ip) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await registerPeerByIP(ip);
+    setPeerIP('');
+    setShowPeerInput(false);
+    autoSync.registerPeer(ip);
     loadTrip();
   }
 
@@ -91,7 +113,7 @@ export default function TripDetailScreen() {
   const poolTelemetry = computePoolTelemetry(poolDeps, trip.expenses);
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -106,6 +128,9 @@ export default function TripDetailScreen() {
           </View>
         </View>
         <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => router.push(`/trips/invite?id=${trip.id}`)}>
+            <Ionicons name="person-add-outline" size={18} color="#FFB000" />
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headerBtn} onPress={() => setShowSyncModal(true)}>
             <Ionicons name="sync-outline" size={18} color="#FFB000" />
           </TouchableOpacity>
@@ -167,6 +192,46 @@ export default function TripDetailScreen() {
             <Text style={styles.poolDepositBtnMainText}>ADD POOL DEPOSIT</Text>
           </TouchableOpacity>
         )}
+
+        {/* P2P Auto-Sync Panel */}
+        <View style={styles.syncPanel}>
+          <View style={styles.syncPanelHeader}>
+            <Ionicons name="cloud-done-outline" size={14} color="#00FF66" />
+            <Text style={styles.syncPanelTitle}>MESH AUTO-SYNC · 30s</Text>
+            <Text style={styles.syncPanelStatus}>
+              {autoSync.isSyncing ? '⟳' : autoSync.healthy ? '●' : '!'}
+            </Text>
+          </View>
+          <Text style={styles.syncPanelMsg}>
+            {autoSync.lastMessage || 'Ready'}
+          </Text>
+          {ownIP && (
+            <Text style={styles.myIP}>MY IP: {ownIP}:8765 · share this with a buddy</Text>
+          )}
+          {showPeerInput ? (
+            <View style={styles.peerRow}>
+              <TextInput
+                style={styles.input}
+                placeholder="buddy IP e.g. 192.168.1.50"
+                placeholderTextColor="#555555"
+                value={peerIP}
+                onChangeText={setPeerIP}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity style={styles.addBtn} onPress={handleAddPeer}>
+                <Text style={styles.addBtnText}>ADD</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.peerCancelBtn} onPress={() => { setShowPeerInput(false); setPeerIP(''); }}>
+                <Text style={styles.peerCancelBtnText}>X</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.addPeerBtn} onPress={() => setShowPeerInput(true)}>
+              <Ionicons name="wifi-outline" size={14} color="#00FF66" />
+              <Text style={styles.addPeerBtnText}>+ ADD BUDDY'S IP FOR AUTO-SYNC</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Members */}
         <View style={styles.section}>
@@ -315,6 +380,23 @@ const styles = StyleSheet.create({
   poolDepositBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#000000', fontWeight: '700' },
   poolCancelBtn: { backgroundColor: '#333333', borderRadius: 4, paddingHorizontal: 10, justifyContent: 'center' },
   poolCancelBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#888888', fontWeight: '700' },
+  syncPanel: {
+    margin: 16, backgroundColor: '#0A0A0A', borderRadius: 4, padding: 12,
+    borderWidth: 1, borderColor: '#00FF66',
+  },
+  syncPanelHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  syncPanelTitle: { fontFamily: 'monospace', fontSize: 11, color: '#00FF66', fontWeight: '700', letterSpacing: 1 },
+  syncPanelStatus: { marginLeft: 'auto', fontFamily: 'monospace', fontSize: 12, color: '#00FF66' },
+  syncPanelMsg: { fontFamily: 'monospace', fontSize: 11, color: '#888888', marginBottom: 4 },
+  myIP: { fontFamily: 'monospace', fontSize: 10, color: '#FFB000', marginBottom: 8 },
+  addPeerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#1F1F1F', borderRadius: 4, paddingVertical: 8, paddingHorizontal: 10,
+  },
+  addPeerBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#00FF66', fontWeight: '700' },
+  peerRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  peerCancelBtn: { backgroundColor: '#333333', borderRadius: 4, paddingHorizontal: 10, justifyContent: 'center' },
+  peerCancelBtnText: { fontFamily: 'monospace', fontSize: 11, color: '#888888', fontWeight: '700' },
   section: { paddingHorizontal: 16, marginBottom: 8 },
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

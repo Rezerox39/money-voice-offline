@@ -16,10 +16,12 @@ import { computeBalances } from '../../src/lib/debt';
 import { speakSettlementSummary, stopSpeaking } from '../../src/lib/speechSynthesis';
 import { Trip, CURRENCIES } from '../../src/types';
 import { COLORS, SPACING, FONT_SIZE, RADIUS } from '../../src/constants';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SettlementScreen() {
   const { tripId } = useLocalSearchParams<{ tripId: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
@@ -56,7 +58,7 @@ export default function SettlementScreen() {
 
   if (!trip) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
         <Text style={styles.loading}>Loading...</Text>
       </View>
     );
@@ -67,7 +69,7 @@ export default function SettlementScreen() {
   const currency = CURRENCIES[trip.currency] || { symbol: '₹', code: 'INR' };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
       {/* Terminal Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>

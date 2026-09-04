@@ -29,8 +29,10 @@ export async function initDatabase(database?: SQLite.SQLiteDatabase): Promise<vo
       name TEXT NOT NULL,
       currency TEXT NOT NULL DEFAULT 'INR',
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      group_code TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_trips_group_code ON trips(group_code);
 
     CREATE TABLE IF NOT EXISTS members (
       id TEXT PRIMARY KEY,
@@ -92,6 +94,16 @@ export async function initDatabase(database?: SQLite.SQLiteDatabase): Promise<vo
     );
   `);
 
+  // ── Migration: add group_code to existing trips tables ────────
+  try {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(trips)');
+    if (!cols.some((c) => c.name === 'group_code')) {
+      await db.execAsync(`ALTER TABLE trips ADD COLUMN group_code TEXT`);
+    }
+  } catch (err) {
+    console.warn('[DB_MIGRATION] group_code migration skipped:', err);
+  }
+
   // ── Deterministic seed on fresh install ───────────────────────
   await seedIfEmpty(db);
 }
@@ -108,8 +120,8 @@ async function seedIfEmpty(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.withExclusiveTransactionAsync(async (txn) => {
     // Seed welcome trip
     await txn.runAsync(
-      'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      [tripId, 'Welcome Trip', 'INR', now, now]
+      'INSERT INTO trips (id, name, currency, created_at, updated_at, group_code) VALUES (?, ?, ?, ?, ?, ?)',
+      [tripId, 'Welcome Trip', 'INR', now, now, generateGroupCode()]
     );
     // Seed two members
     await txn.runAsync(
@@ -128,6 +140,71 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
   return db;
 }
 
+// ── Group Code Helpers (Join-via-QR / invite) ────────────────────
+const GROUP_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0,1,I,O
+
+export function generateGroupCode(): string {
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += GROUP_CODE_CHARS[Math.floor(Math.random() * GROUP_CODE_CHARS.length)];
+  }
+  return code;
+}
+
+export async function getTripByGroupCode(code: string): Promise<Trip | null> {
+  const database = await getDb();
+  const normalized = code.trim().toUpperCase();
+  const row = await database.getFirstAsync<{
+    id: string;
+    name: string;
+    currency: string;
+    created_at: number;
+    updated_at: number;
+    group_code: string | null;
+  }>('SELECT * FROM trips WHERE UPPER(group_code) = ?', [normalized]);
+  if (!row) return null;
+
+  const members = await getMembersByTripId(row.id);
+  const expenses = await getExpensesByTripId(row.id);
+  return {
+    id: row.id,
+    name: row.name,
+    currency: row.currency,
+    members,
+    expenses,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupCode: row.group_code || undefined,
+  };
+}
+
+export async function ensureGroupCode(tripId: string): Promise<string> {
+  const database = await getDb();
+  const row = await database.getFirstAsync<{ group_code: string | null }>(
+    'SELECT group_code FROM trips WHERE id = ?',
+    [tripId]
+  );
+  if (row?.group_code) return row.group_code;
+
+  let code = generateGroupCode();
+  let taken = true;
+  while (taken) {
+    const existing = await database.getFirstAsync<{ id: string }>(
+      'SELECT id FROM trips WHERE UPPER(group_code) = ?',
+      [code]
+    );
+    if (!existing) {
+      taken = false;
+    } else {
+      code = generateGroupCode();
+    }
+  }
+
+  await database.runAsync('UPDATE trips SET group_code = ? WHERE id = ?', [code, tripId]);
+  return code;
+}
+
+
 // ── Read helpers (single-statement, no transaction needed) ─────────
 
 export async function getAllTrips(): Promise<Trip[]> {
@@ -138,6 +215,7 @@ export async function getAllTrips(): Promise<Trip[]> {
     currency: string;
     created_at: number;
     updated_at: number;
+    group_code: string | null;
   }>('SELECT * FROM trips ORDER BY updated_at DESC');
 
   const trips: Trip[] = [];
@@ -152,6 +230,7 @@ export async function getAllTrips(): Promise<Trip[]> {
       expenses,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      groupCode: row.group_code || undefined,
     });
   }
   return trips;
@@ -165,6 +244,7 @@ export async function getTripById(id: string): Promise<Trip | null> {
     currency: string;
     created_at: number;
     updated_at: number;
+    group_code: string | null;
   }>('SELECT * FROM trips WHERE id = ?', [id]);
 
   if (!row) return null;
@@ -180,6 +260,7 @@ export async function getTripById(id: string): Promise<Trip | null> {
     expenses,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    groupCode: row.group_code || undefined,
   };
 }
 
@@ -374,13 +455,14 @@ export async function createTrip(name: string, currency: string): Promise<Trip> 
   const database = await getDb();
   const id = generateUUID();
   const now = Date.now();
+  const groupCode = generateGroupCode();
 
   await database.runAsync(
-    'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    [id, name, currency, now, now]
+    'INSERT INTO trips (id, name, currency, created_at, updated_at, group_code) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, name, currency, now, now, groupCode]
   );
 
-  return { id, name, currency, members: [], expenses: [], createdAt: now, updatedAt: now };
+  return { id, name, currency, members: [], expenses: [], createdAt: now, updatedAt: now, groupCode };
 }
 
 export async function addMember(
@@ -580,8 +662,8 @@ export async function seedPlayground(): Promise<void> {
   await database.withExclusiveTransactionAsync(async (txn) => {
     // Trip: #ladakh-expedition
     await txn.runAsync(
-      'INSERT INTO trips (id, name, currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      [tripId, 'Ladakh Expedition', 'INR', now, now]
+      'INSERT INTO trips (id, name, currency, created_at, updated_at, group_code) VALUES (?, ?, ?, ?, ?, ?)',
+      [tripId, 'Ladakh Expedition', 'INR', now, now, generateGroupCode()]
     );
 
     // Members: You, Rahul, Amit, Sara

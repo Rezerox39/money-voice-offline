@@ -29,7 +29,7 @@ export default function RecurringScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 24) }]}>
       <Text style={styles.header}>RECURRING EXPENSES</Text>
 
       {items.length === 0 && !showAdd && (

@@ -14,6 +14,9 @@ import { VoiceHUD } from '../src/components/VoiceHUD';
 import { EmptyState } from '../src/components/EmptyState';
 import { Dock } from '../src/components/Dock';
 import { CLIInputBar } from '../src/components/CLIInputBar';
+import { ParticleField } from '../src/components/ParticleField';
+import { AnimatedAppear } from '../src/components/AnimatedAppear';
+import { useAutoSync } from '../src/hooks/useAutoSync';
 import { P2PSyncModal } from '../src/components/P2PSyncModal';
 import { ExpenseRowSkeleton } from '../src/components/LoadingSkeleton';
 import { recordActivity, getStreakData, StreakData } from '../src/lib/streak';
@@ -66,6 +69,9 @@ export default function ChannelScreen() {
   const voiceState = voice.state;
   const isRecording = voiceState.stage === 'listening' || voiceState.isRecording;
   const hideBottomUI = keyboardVisible || showCLIBar;
+
+  // Auto-sync when in trip mode (polls every 30s)
+  const sync = useAutoSync(activeTripId);
 
   async function onRefresh() {
     setRefreshing(true);
@@ -167,16 +173,18 @@ export default function ChannelScreen() {
           <Text style={styles.tripChannel}>#{activeTrip.name.toLowerCase().replace(/\s+/g, '-')}</Text>
           <Text style={styles.tripMeta}>{activeTrip.members.length} members · {activeTrip.expenses.length} txns</Text>
         </View>
-        {activeTrip.expenses.map((exp) => {
+        {activeTrip.expenses.map((exp, idx) => {
           const payer = activeTrip.members.find((m) => m.id === exp.paidBy);
           return (
-            <View key={exp.id} style={styles.expenseRow}>
+            <AnimatedAppear key={exp.id} index={idx}>
+            <View style={styles.expenseRow}>
               <View style={styles.expenseInfo}>
                 <Text style={styles.expenseTitle}>{exp.title}</Text>
                 <Text style={styles.expenseMeta}>@{payer?.name ?? 'Unknown'} · {exp.category}</Text>
               </View>
               <Text style={styles.expenseAmount}>{currency.symbol}{exp.amount.toLocaleString('en-IN')}</Text>
             </View>
+            </AnimatedAppear>
           );
         })}
         {activeTrip.expenses.length === 0 && (
@@ -209,14 +217,16 @@ export default function ChannelScreen() {
         {personalExpenses.length === 0 ? (
           <EmptyState icon="cash-outline" title="No personal expenses" subtitle="Say 'Chai 30 personal' to log directly" />
         ) : (
-          personalExpenses.map((exp) => (
-            <View key={exp.id} style={styles.personalRow}>
-              <View style={styles.personalInfo}>
-                <Text style={styles.personalTitle}>{exp.title}</Text>
-                <Text style={styles.personalMeta}>{exp.category}</Text>
+          personalExpenses.map((exp, idx) => (
+            <AnimatedAppear key={exp.id} index={idx}>
+              <View style={styles.personalRow}>
+                <View style={styles.personalInfo}>
+                  <Text style={styles.personalTitle}>{exp.title}</Text>
+                  <Text style={styles.personalMeta}>{exp.category}</Text>
+                </View>
+                <Text style={styles.personalAmount}>₹{exp.amount.toLocaleString('en-IN')}</Text>
               </View>
-              <Text style={styles.personalAmount}>₹{exp.amount.toLocaleString('en-IN')}</Text>
-            </View>
+            </AnimatedAppear>
           ))
         )}
       </View>
@@ -343,8 +353,11 @@ const styles = StyleSheet.create({
   burnBar: { fontFamily: 'monospace', fontSize: 14, color: '#00FF66', letterSpacing: 1 },
   poolMeta: { fontFamily: 'monospace', fontSize: 10, color: '#555555', marginTop: 4 },
   tripHeader: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#222222' },
+  tripHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tripChannel: { fontFamily: 'monospace', fontSize: 16, color: '#00FF66', fontWeight: '700' },
+  groupCodeBadge: { fontFamily: 'monospace', fontSize: 10, color: '#FFB000', backgroundColor: '#332200', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, letterSpacing: 0.5, fontWeight: '700' },
   tripMeta: { fontFamily: 'monospace', fontSize: 11, color: '#555555', marginTop: 2 },
+  syncBadge: { fontFamily: 'monospace', fontSize: 10, color: '#FFB000', marginLeft: 'auto', letterSpacing: 0.5 },
   burnSummary: { flexDirection: 'row', margin: 16, backgroundColor: '#0A0A0A', borderRadius: 4, borderWidth: 1, borderColor: '#222222' },
   burnRow: { flex: 1, alignItems: 'center', padding: 12, gap: 4 },
   burnDivider: { width: 1, backgroundColor: '#222222' },

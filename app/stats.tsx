@@ -60,7 +60,7 @@ export default function StatsScreen() {
   ];
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]} contentContainerStyle={styles.content}>
       <Text style={styles.header}>STATISTICS</Text>
 
       {/* Period Selector */}

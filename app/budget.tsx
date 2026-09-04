@@ -14,6 +14,7 @@ import {
 } from '../src/lib/budget';
 import { CATEGORY_CONFIGS, getCategoryConfig } from '../src/constants/categories';
 import { generateUUID } from '../src/lib/uuid';
+import { ParticleField } from '../src/components/ParticleField';
 
 type BudgetTab = 'overview' | 'recurring' | 'goals';
 
@@ -73,7 +74,9 @@ export default function BudgetScreen() {
   }
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} contentContainerStyle={styles.content}>
+    <View style={styles.container}>
+      <ParticleField active={true} count={14} />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 24) }]}>
       {/* Header */}
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -180,6 +183,7 @@ export default function BudgetScreen() {
         </TouchableOpacity>
       )}
     </ScrollView>
+    </View>
   );
 }
 

@@ -7,6 +7,8 @@ import { initDatabase } from '../src/lib/database';
 import { LedgerProvider } from '../src/context/LedgerContext';
 import { isOnboardingComplete, hasPinLock } from '../src/lib/profile';
 import { View, ActivityIndicator } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
+import { ParticleField } from '../src/components/ParticleField';
 
 const DB_NAME = 'moneyvoice_v2.db';
 
@@ -20,6 +22,10 @@ function RootNavigationGate() {
   const [isReady, setIsReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState<string | null>(null);
   const hasNavigated = useRef(false);
+
+  useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,13 +82,16 @@ function RootNavigationGate() {
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: '#000000' },
-        animation: 'none',
-      }}
-    >
+    <>
+      <ParticleField active={true} count={20} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#000000' },
+          animation: 'fade',
+          animationDuration: 200,
+        }}
+      >
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="pin-lock" />
@@ -97,7 +106,8 @@ function RootNavigationGate() {
       <Stack.Screen name="settle" />
       <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
       <Stack.Screen name="settings" />
-    </Stack>
+      </Stack>
+    </>
   );
 }
 

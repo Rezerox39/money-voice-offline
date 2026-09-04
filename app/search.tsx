@@ -6,6 +6,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { matchesFilters, SearchFilters } from '../src/lib/search';
+import { ParticleField } from '../src/components/ParticleField';
 import { getCategoryConfig } from '../src/constants/categories';
 
 interface ExpenseRow {
@@ -60,7 +61,8 @@ export default function SearchScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
+      <ParticleField active={true} count={14} />
       {/* Header with Stats Button */}
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>[# LEDGER]</Text>

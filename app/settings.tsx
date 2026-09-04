@@ -10,6 +10,7 @@ import { resetDatabase } from '../src/lib/database';
 import { getProfile } from '../src/lib/profile';
 import { getStreakData } from '../src/lib/streak';
 import { useLedger } from '../src/context/LedgerContext';
+import { ParticleField } from '../src/components/ParticleField';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -65,7 +66,9 @@ export default function SettingsScreen() {
     : 'NO TRIP ACTIVE';
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingTop: Math.max(insets.top, 16) }}>
+    <View style={styles.container}>
+      <ParticleField active={true} count={14} />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: Math.max(insets.top, 24) }}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -180,6 +183,7 @@ export default function SettingsScreen() {
         )}
       </View>
     </ScrollView>
+    </View>
   );
 }
 

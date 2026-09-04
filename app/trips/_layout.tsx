@@ -7,7 +7,8 @@ export default function TripsLayout() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: '#000000' },
-        animation: 'none',
+        animation: 'fade',
+        animationDuration: 200,
       }}
     >
       <Stack.Screen name="index" />
@@ -15,6 +16,8 @@ export default function TripsLayout() {
       <Stack.Screen name="[id]" />
       <Stack.Screen name="expense/[id]" options={{ presentation: 'modal' }} />
       <Stack.Screen name="share-qr/[id]" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="join" />
+      <Stack.Screen name="invite" />
     </Stack>
   );
 }
