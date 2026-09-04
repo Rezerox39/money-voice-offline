@@ -18,6 +18,7 @@ import { useLedger, ActiveMode } from '../src/context/LedgerContext';
 import { useVoiceExpense } from '../src/hooks/useVoiceExpense';
 import { VoiceHUD } from '../src/components/VoiceHUD';
 import { EmptyState } from '../src/components/EmptyState';
+import { Dock } from '../src/components/Dock';
 import { ExpenseRow } from '../src/components/ExpenseRow';
 import { addPersonalExpense } from '../src/lib/database';
 import { computePoolTelemetry } from '../src/lib/debt';
@@ -46,39 +47,6 @@ function StatusBar() {
 
 // ── Dock ───────────────────────────────────────────────────────────
 
-function Dock({
-  mode,
-  onModeSwitch,
-  onSettle,
-  onQR,
-  isRecording,
-}: {
-  mode: ActiveMode;
-  onModeSwitch: () => void;
-  onSettle: () => void;
-  onQR: () => void;
-  isRecording: boolean;
-}) {
-  return (
-    <View style={styles.dock}>
-      <TouchableOpacity style={styles.dockBtn} onPress={onModeSwitch}>
-        <Text style={styles.dockBtnText}>
-          {mode === 'PERSONAL' ? '[/personal]' : '[/trips]'}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.dockBtnCenter} onPress={() => {}}>
-        <Text style={[styles.dockBtnText, isRecording && styles.recActive]}>
-          {isRecording ? '( ( ( ● REC ) ) )' : '( ( ( ○ ) ) )'}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.dockBtn} onPress={onSettle}>
-        <Text style={styles.dockBtnText}>[$ SETTLE]</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
 
 // ── Main Screen ────────────────────────────────────────────────────
 
@@ -298,8 +266,7 @@ export default function ChannelScreen() {
       <Dock
         mode={mode}
         onModeSwitch={handleModeSwitch}
-        onSettle={handleSettle}
-        onQR={handleQR}
+        onVoicePress={handleVoicePress}
         isRecording={isRecording}
       />
 

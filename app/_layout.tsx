@@ -1,16 +1,8 @@
-// ─────────────────────────────────────────────────────────────────
-// _layout.tsx — BitChat AMOLED Shell
-// Pure black background, zero navigation headers.
-// Persistent top status line + bottom utilitarian dock.
-// ─────────────────────────────────────────────────────────────────
-
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, StyleSheet } from 'react-native';
 import { initDatabase } from '../src/lib/database';
 import { LedgerProvider } from '../src/context/LedgerContext';
-import { COLORS } from '../src/constants';
 
 export default function RootLayout() {
   useEffect(() => {
@@ -28,10 +20,14 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="stats" />
+        <Stack.Screen name="budget" />
+        <Stack.Screen name="search" />
+        <Stack.Screen name="recurring" />
         <Stack.Screen name="trips" />
         <Stack.Screen name="settle" />
         <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" />
       </Stack>
     </LedgerProvider>
   );
