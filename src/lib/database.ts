@@ -32,7 +32,6 @@ export async function initDatabase(database?: SQLite.SQLiteDatabase): Promise<vo
       updated_at INTEGER NOT NULL,
       group_code TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_trips_group_code ON trips(group_code);
 
     CREATE TABLE IF NOT EXISTS members (
       id TEXT PRIMARY KEY,
@@ -95,17 +94,32 @@ export async function initDatabase(database?: SQLite.SQLiteDatabase): Promise<vo
   `);
 
   // ── Migration: add group_code to existing trips tables ────────
+  // Warning: CREATE INDEX on trips(group_code) MUST run AFTER the column exists,
+  // or installs from older builds (trips without group_code) crash on boot.
   try {
     const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(trips)');
     if (!cols.some((c) => c.name === 'group_code')) {
-      await db.execAsync(`ALTER TABLE trips ADD COLUMN group_code TEXT`);
+      await db.execAsync('ALTER TABLE trips ADD COLUMN group_code TEXT');
+    }
+    if (!cols.some((c) => c.name === 'updated_at')) {
+      await db.execAsync('ALTER TABLE trips ADD COLUMN updated_at INTEGER');
     }
   } catch (err) {
-    console.warn('[DB_MIGRATION] group_code migration skipped:', err);
+    console.warn('[DB_MIGRATION] trips column migration skipped:', err);
+  }
+
+  try {
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_trips_group_code ON trips(group_code);');
+  } catch (err) {
+    console.warn('[DB_MIGRATION] group_code index skipped:', err);
   }
 
   // ── Deterministic seed on fresh install ───────────────────────
-  await seedIfEmpty(db);
+  try {
+    await seedIfEmpty(db);
+  } catch (err) {
+    console.warn('[DB_SEED] seed skipped:', err);
+  }
 }
 async function seedIfEmpty(database: SQLite.SQLiteDatabase): Promise<void> {
   const tripCount = await database.getFirstAsync<{ cnt: number }>(
